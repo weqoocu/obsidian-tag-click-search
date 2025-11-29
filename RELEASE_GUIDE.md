@@ -16,7 +16,7 @@
 3. **推送代码**：
    ```bash
    # 在项目目录执行
-   git remote add origin https://github.com/YOUR_USERNAME/obsidian-tag-click-search.git
+   git remote add origin https://github.com/weqoocu/obsidian-tag-click-search.git
    git branch -M main
    git push -u origin main
    ```
@@ -48,7 +48,7 @@
    3. 将下载的文件放入该文件夹
    4. 重启 Obsidian 并在设置中启用插件
    
-   🔗 详细文档：https://github.com/YOUR_USERNAME/obsidian-tag-click-search
+   🔗 详细文档：https://github.com/weqoocu/obsidian-tag-click-search
    ```
 
 3. **上传文件**：
@@ -73,7 +73,7 @@
      "name": "Tag Click Search",
      "author": "酷口家数字花园",
      "description": "点击标签自动搜索并按 title 排序显示包含该标签的笔记",
-     "repo": "YOUR_USERNAME/obsidian-tag-click-search"
+     "repo": "weqoocu/obsidian-tag-click-search"
    }
    ```
 

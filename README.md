@@ -40,7 +40,7 @@
 
 #### 方法一：手动安装（推荐）
 
-1. 下载最新版本的 [Release](https://github.com/yourusername/obsidian-tag-click-search/releases)
+1. 下载最新版本的 [Release](https://github.com/weqoocu/obsidian-tag-click-search/releases)
 2. 解压下载的文件
 3. 将文件夹复制到你的 Obsidian vault 的 `.obsidian/plugins/` 目录下
 4. 重启 Obsidian
@@ -49,7 +49,7 @@
 #### 方法二：通过 BRAT 插件安装
 
 1. 安装 [BRAT](https://github.com/TfTHacker/obsidian42-brat) 插件
-2. 在 BRAT 设置中添加仓库：`yourusername/obsidian-tag-click-search`
+2. 在 BRAT 设置中添加仓库：`weqoocu/obsidian-tag-click-search`
 3. 启用插件
 
 ### 📁 文件结构
@@ -217,7 +217,7 @@ tags: [学习, 笔记, 知识管理]
    - 错误截图
 
 2. **提交 Issue**：
-   - 访问 [GitHub Issues](https://github.com/yourusername/obsidian-tag-click-search/issues)
+   - 访问 [GitHub Issues](https://github.com/weqoocu/obsidian-tag-click-search/issues)
    - 使用提供的模板描述问题
    - 附上相关日志信息
 
@@ -299,7 +299,7 @@ tags: [学习, 笔记, 知识管理]
 
 **⭐ 如果这个插件对你有帮助，请给个 Star 支持一下！**
 
-[![Star History Chart](https://api.star-history.com/svg?repos=yourusername/obsidian-tag-click-search&type=Date)](https://star-history.com/#yourusername/obsidian-tag-click-search&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=weqoocu/obsidian-tag-click-search&type=Date)](https://star-history.com/#weqoocu/obsidian-tag-click-search&Date)
 
 **🎉 享受愉快的标签搜索体验！**
 
