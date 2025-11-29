@@ -290,8 +290,8 @@ tags: [学习, 笔记, 知识管理]
 
 - 🐛 **问题反馈**：[GitHub Issues](https://github.com/yourusername/obsidian-tag-click-search/issues)
 - 💬 **功能讨论**：[GitHub Discussions](https://github.com/yourusername/obsidian-tag-click-search/discussions)
-- 📧 **邮件联系**：your-email@example.com
-- 🌐 **个人网站**：[酷口家数字花园](https://your-website.com)
+- 📧 **邮件联系**：musicleaf@qq.com
+- 🌐 **个人网站**：[酷口家数字花园](https://weqoocu.com)
 
 ---
 
