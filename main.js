@@ -49,6 +49,153 @@ class TagSearchResultsView extends ItemView {
             cls: 'tag-search-button'
         });
 
+        // 创建标签建议下拉列表
+        const suggestionsContainer = searchBox.createEl('div', { 
+            cls: 'tag-suggestions-container' 
+        });
+        suggestionsContainer.style.display = 'none';
+
+        // 获取所有可用标签
+        const getAllTags = () => {
+            const tags = new Set();
+            const allFiles = this.plugin.app.vault.getMarkdownFiles();
+            
+            for (const file of allFiles) {
+                const cache = this.plugin.app.metadataCache.getFileCache(file);
+                if (!cache) continue;
+
+                // 从内容标签收集
+                if (cache.tags) {
+                    cache.tags.forEach(t => {
+                        const tagName = t.tag.replace(/^#/, '');
+                        tags.add(tagName);
+                    });
+                }
+
+                // 从 frontmatter 标签收集
+                if (cache.frontmatter && cache.frontmatter.tags) {
+                    const fmTags = Array.isArray(cache.frontmatter.tags) 
+                        ? cache.frontmatter.tags 
+                        : [cache.frontmatter.tags];
+                    
+                    fmTags.forEach(t => {
+                        if (t != null) {
+                            tags.add(t.toString());
+                        }
+                    });
+                }
+            }
+
+            return Array.from(tags).sort((a, b) => 
+                a.localeCompare(b, 'zh-CN', { numeric: true })
+            );
+        };
+
+        // 显示标签建议
+        const showSuggestions = (query) => {
+            const cleanQuery = query.replace(/^#+/, '').toLowerCase().trim();
+            
+            if (!cleanQuery) {
+                suggestionsContainer.empty();
+                suggestionsContainer.style.display = 'none';
+                return;
+            }
+
+            const allTags = getAllTags();
+            const matchedTags = allTags.filter(tag => 
+                tag.toLowerCase().includes(cleanQuery)
+            ).slice(0, 10); // 最多显示10个建议
+
+            if (matchedTags.length === 0) {
+                suggestionsContainer.empty();
+                suggestionsContainer.style.display = 'none';
+                return;
+            }
+
+            suggestionsContainer.empty();
+            suggestionsContainer.style.display = 'block';
+
+            matchedTags.forEach(tag => {
+                const item = suggestionsContainer.createEl('div', {
+                    cls: 'tag-suggestion-item'
+                });
+
+                const tagIcon = item.createEl('span', {
+                    cls: 'tag-suggestion-icon',
+                    text: '#'
+                });
+
+                const tagText = item.createEl('span', {
+                    cls: 'tag-suggestion-text',
+                    text: tag
+                });
+
+                item.addEventListener('click', () => {
+                    input.value = tag;
+                    suggestionsContainer.style.display = 'none';
+                    this.plugin.searchAndDisplayTag(tag);
+                });
+
+                item.addEventListener('mouseenter', () => {
+                    item.addClass('tag-suggestion-item-active');
+                });
+
+                item.addEventListener('mouseleave', () => {
+                    item.removeClass('tag-suggestion-item-active');
+                });
+            });
+        };
+
+        // 输入事件监听
+        input.addEventListener('input', (e) => {
+            showSuggestions(e.target.value);
+        });
+
+        // 点击外部关闭建议列表
+        document.addEventListener('click', (e) => {
+            if (!searchBox.contains(e.target)) {
+                suggestionsContainer.style.display = 'none';
+            }
+        });
+
+        // 键盘导航支持
+        let selectedIndex = -1;
+        input.addEventListener('keydown', (e) => {
+            const items = suggestionsContainer.querySelectorAll('.tag-suggestion-item');
+            
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+                updateSelection(items, selectedIndex);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedIndex = Math.max(selectedIndex - 1, -1);
+                updateSelection(items, selectedIndex);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (selectedIndex >= 0 && items[selectedIndex]) {
+                    items[selectedIndex].click();
+                } else {
+                    searchButton.click();
+                }
+                selectedIndex = -1;
+            } else if (e.key === 'Escape') {
+                suggestionsContainer.style.display = 'none';
+                selectedIndex = -1;
+            }
+        });
+
+        const updateSelection = (items, index) => {
+            items.forEach((item, i) => {
+                if (i === index) {
+                    item.addClass('tag-suggestion-item-active');
+                    item.scrollIntoView({ block: 'nearest' });
+                } else {
+                    item.removeClass('tag-suggestion-item-active');
+                }
+            });
+        };
+
         // 搜索按钮点击事件
         searchButton.addEventListener('click', () => {
             const inputTag = input.value.trim();
@@ -56,18 +203,12 @@ class TagSearchResultsView extends ItemView {
                 // 移除开头的 # 如果有的话
                 const cleanTag = inputTag.replace(/^#+/, '');
                 if (cleanTag) {
+                    suggestionsContainer.style.display = 'none';
                     // 调用插件的搜索方法
                     if (this.plugin) {
                         this.plugin.searchAndDisplayTag(cleanTag);
                     }
                 }
-            }
-        });
-
-        // 回车键搜索
-        input.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                searchButton.click();
             }
         });
 
@@ -414,6 +555,7 @@ module.exports = class TagClickSearchPlugin extends Plugin {
                 padding: 10px;
                 background-color: var(--background-secondary);
                 border-radius: 6px;
+                position: relative;
             }
 
             .tag-search-input-wrapper {
@@ -461,6 +603,74 @@ module.exports = class TagClickSearchPlugin extends Plugin {
 
             .tag-search-button:active {
                 transform: translateY(1px);
+            }
+
+            /* 标签建议样式 */
+            .tag-suggestions-container {
+                position: absolute;
+                top: calc(100% - 5px);
+                left: 10px;
+                right: 10px;
+                background-color: var(--background-primary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                max-height: 300px;
+                overflow-y: auto;
+                z-index: 1000;
+            }
+
+            .tag-suggestion-item {
+                padding: 8px 12px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                transition: background-color 0.15s;
+                border-bottom: 1px solid var(--background-modifier-border);
+            }
+
+            .tag-suggestion-item:last-child {
+                border-bottom: none;
+            }
+
+            .tag-suggestion-item:hover,
+            .tag-suggestion-item-active {
+                background-color: var(--background-modifier-hover);
+            }
+
+            .tag-suggestion-icon {
+                color: var(--text-accent);
+                font-weight: 600;
+                font-size: 14px;
+                flex-shrink: 0;
+            }
+
+            .tag-suggestion-text {
+                color: var(--text-normal);
+                font-size: 14px;
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .tag-suggestions-container::-webkit-scrollbar {
+                width: 8px;
+            }
+
+            .tag-suggestions-container::-webkit-scrollbar-track {
+                background: var(--background-secondary);
+                border-radius: 4px;
+            }
+
+            .tag-suggestions-container::-webkit-scrollbar-thumb {
+                background: var(--background-modifier-border);
+                border-radius: 4px;
+            }
+
+            .tag-suggestions-container::-webkit-scrollbar-thumb:hover {
+                background: var(--text-muted);
             }
 
             .tag-search-header {

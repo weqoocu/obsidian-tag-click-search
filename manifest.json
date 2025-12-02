@@ -1,7 +1,7 @@
 {
   "id": "tag-click-search",
   "name": "Tag Click Search",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minAppVersion": "0.15.0",
   "description": "点击标签自动搜索并按 title 排序显示包含该标签的笔记",
   "author": "酷口家数字花园",
