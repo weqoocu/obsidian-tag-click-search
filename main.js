@@ -4,10 +4,11 @@ const VIEW_TYPE_TAG_SEARCH = 'tag-search-results-view';
 
 // 自定义视图类 - 显示标签搜索结果
 class TagSearchResultsView extends ItemView {
-    constructor(leaf, tag, files) {
+    constructor(leaf, tag, files, plugin) {
         super(leaf);
         this.tag = tag;
         this.files = files;
+        this.plugin = plugin;
     }
 
     getViewType() {
@@ -27,10 +28,53 @@ class TagSearchResultsView extends ItemView {
         container.empty();
         container.addClass('tag-search-results-container');
 
+        // 搜索输入框区域
+        const searchBox = container.createEl('div', { cls: 'tag-search-input-container' });
+        
+        const inputWrapper = searchBox.createEl('div', { cls: 'tag-search-input-wrapper' });
+        
+        const input = inputWrapper.createEl('input', {
+            type: 'text',
+            placeholder: '输入标签名搜索（可带 # 或不带）',
+            cls: 'tag-search-input'
+        });
+        
+        // 设置初始值
+        if (this.tag) {
+            input.value = this.tag;
+        }
+
+        const searchButton = inputWrapper.createEl('button', {
+            text: '搜索',
+            cls: 'tag-search-button'
+        });
+
+        // 搜索按钮点击事件
+        searchButton.addEventListener('click', () => {
+            const inputTag = input.value.trim();
+            if (inputTag) {
+                // 移除开头的 # 如果有的话
+                const cleanTag = inputTag.replace(/^#+/, '');
+                if (cleanTag) {
+                    // 调用插件的搜索方法
+                    if (this.plugin) {
+                        this.plugin.searchAndDisplayTag(cleanTag);
+                    }
+                }
+            }
+        });
+
+        // 回车键搜索
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                searchButton.click();
+            }
+        });
+
         // 标题
         const header = container.createEl('div', { cls: 'tag-search-header' });
         header.createEl('h4', { 
-            text: `包含标签 #${this.tag} 的笔记` 
+            text: this.tag ? `包含标签 #${this.tag} 的笔记` : '标签搜索结果'
         });
         header.createEl('div', { 
             cls: 'tag-search-count',
@@ -90,7 +134,7 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             // 注册自定义视图
             this.registerView(
                 VIEW_TYPE_TAG_SEARCH,
-                (leaf) => new TagSearchResultsView(leaf, '', [])
+                (leaf) => new TagSearchResultsView(leaf, '', [], this)
             );
             console.log('✅ Tag Click Search: 视图已注册');
 
@@ -348,6 +392,7 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         if (view instanceof TagSearchResultsView) {
             view.tag = tag;
             view.files = files;
+            view.plugin = this;
             await view.onOpen();
         }
 
@@ -362,6 +407,60 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         style.textContent = `
             .tag-search-results-container {
                 padding: 10px;
+            }
+
+            .tag-search-input-container {
+                margin-bottom: 15px;
+                padding: 10px;
+                background-color: var(--background-secondary);
+                border-radius: 6px;
+            }
+
+            .tag-search-input-wrapper {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+            }
+
+            .tag-search-input {
+                flex: 1;
+                padding: 8px 12px;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                background-color: var(--background-primary);
+                color: var(--text-normal);
+                font-size: 14px;
+                outline: none;
+                transition: border-color 0.2s;
+            }
+
+            .tag-search-input:focus {
+                border-color: var(--interactive-accent);
+                box-shadow: 0 0 0 2px var(--interactive-accent-hover);
+            }
+
+            .tag-search-input::placeholder {
+                color: var(--text-muted);
+            }
+
+            .tag-search-button {
+                padding: 8px 16px;
+                background-color: var(--interactive-accent);
+                color: var(--text-on-accent);
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                transition: background-color 0.2s;
+            }
+
+            .tag-search-button:hover {
+                background-color: var(--interactive-accent-hover);
+            }
+
+            .tag-search-button:active {
+                transform: translateY(1px);
             }
 
             .tag-search-header {
