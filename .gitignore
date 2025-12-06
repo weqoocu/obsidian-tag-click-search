@@ -52,3 +52,11 @@ jspm_packages/
 .obsidian/hotkeys.json
 .obsidian/core-plugins.json
 .obsidian/community-plugins.json
+
+# Release temporary files
+release-*/
+RELEASE_NOTES_v*.md
+
+# Scripts (optional, can be versioned)
+# release.sh
+# release-manual.sh
