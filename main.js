@@ -4,11 +4,12 @@ const VIEW_TYPE_TAG_SEARCH = 'tag-search-results-view';
 
 // 自定义视图类 - 显示标签搜索结果
 class TagSearchResultsView extends ItemView {
-    constructor(leaf, tag, files, plugin) {
+    constructor(leaf, tag, files, plugin, searchType = 'tag') {
         super(leaf);
         this.tag = tag;
         this.files = files;
         this.plugin = plugin;
+        this.searchType = searchType; // 'tag' 或 'title'
     }
 
     getViewType() {
@@ -16,11 +17,14 @@ class TagSearchResultsView extends ItemView {
     }
 
     getDisplayText() {
+        if (this.searchType === 'title') {
+            return `标题: ${this.tag} (${this.files.length})`;
+        }
         return `标签: #${this.tag} (${this.files.length})`;
     }
 
     getIcon() {
-        return 'tag';
+        return this.searchType === 'title' ? 'file-text' : 'tag';
     }
 
     async onOpen() {
@@ -35,13 +39,14 @@ class TagSearchResultsView extends ItemView {
         
         const input = inputWrapper.createEl('input', {
             type: 'text',
-            placeholder: '输入标签名搜索（可带 # 或不带）',
+            placeholder: '带#搜索标签，不带#搜索标题',
             cls: 'tag-search-input'
         });
         
         // 设置初始值
         if (this.tag) {
-            input.value = this.tag;
+            // 根据搜索类型决定是否添加 #
+            input.value = this.searchType === 'tag' ? `#${this.tag}` : this.tag;
         }
 
         const searchButton = inputWrapper.createEl('button', {
@@ -93,6 +98,13 @@ class TagSearchResultsView extends ItemView {
 
         // 显示标签建议
         const showSuggestions = (query) => {
+            // 只有输入包含 # 号时才显示标签建议
+            if (!query.includes('#')) {
+                suggestionsContainer.empty();
+                suggestionsContainer.style.display = 'none';
+                return;
+            }
+
             const cleanQuery = query.replace(/^#+/, '').toLowerCase().trim();
             
             if (!cleanQuery) {
@@ -131,9 +143,9 @@ class TagSearchResultsView extends ItemView {
                 });
 
                 item.addEventListener('click', () => {
-                    input.value = tag;
+                    input.value = `#${tag}`;
                     suggestionsContainer.style.display = 'none';
-                    this.plugin.searchAndDisplayTag(tag);
+                    this.plugin.searchAndDisplay(`#${tag}`);
                 });
 
                 item.addEventListener('mouseenter', () => {
@@ -198,25 +210,25 @@ class TagSearchResultsView extends ItemView {
 
         // 搜索按钮点击事件
         searchButton.addEventListener('click', () => {
-            const inputTag = input.value.trim();
-            if (inputTag) {
-                // 移除开头的 # 如果有的话
-                const cleanTag = inputTag.replace(/^#+/, '');
-                if (cleanTag) {
-                    suggestionsContainer.style.display = 'none';
-                    // 调用插件的搜索方法
-                    if (this.plugin) {
-                        this.plugin.searchAndDisplayTag(cleanTag);
-                    }
+            const inputValue = input.value.trim();
+            if (inputValue) {
+                suggestionsContainer.style.display = 'none';
+                // 调用插件的搜索方法
+                if (this.plugin) {
+                    this.plugin.searchAndDisplay(inputValue);
                 }
             }
         });
 
         // 标题
         const header = container.createEl('div', { cls: 'tag-search-header' });
-        header.createEl('h4', { 
-            text: this.tag ? `包含标签 #${this.tag} 的笔记` : '标签搜索结果'
-        });
+        let headerText = '搜索结果';
+        if (this.tag) {
+            headerText = this.searchType === 'title' 
+                ? `标题包含 "${this.tag}" 的笔记`
+                : `包含标签 #${this.tag} 的笔记`;
+        }
+        header.createEl('h4', { text: headerText });
         header.createEl('div', { 
             cls: 'tag-search-count',
             text: `共 ${this.files.length} 个文件`
@@ -259,6 +271,22 @@ class TagSearchResultsView extends ItemView {
             fileContent.setAttribute('data-path', item.file.path);
             fileContent.setAttribute('title', item.file.path);
         }
+
+        // 移动端底部添加返回按钮
+        if (this.plugin.app.isMobile) {
+            const footerBar = container.createEl('div', { cls: 'tag-search-mobile-footer' });
+            
+            const closeButton = footerBar.createEl('button', {
+                cls: 'tag-search-close-button',
+                attr: { 'aria-label': '关闭搜索' }
+            });
+            closeButton.innerHTML = '← 返回';
+            
+            closeButton.addEventListener('click', () => {
+                // 关闭当前视图
+                this.leaf.detach();
+            });
+        }
     }
 
     async onClose() {
@@ -275,7 +303,7 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             // 注册自定义视图
             this.registerView(
                 VIEW_TYPE_TAG_SEARCH,
-                (leaf) => new TagSearchResultsView(leaf, '', [], this)
+                (leaf) => new TagSearchResultsView(leaf, '', [], this, 'tag')
             );
             console.log('✅ Tag Click Search: 视图已注册');
 
@@ -329,8 +357,8 @@ module.exports = class TagClickSearchPlugin extends Plugin {
     registerTagClickHandler() {
         console.log('Tag Click Search: 注册标签点击事件处理器');
         
-        // 监听文档点击事件
-        this.registerDomEvent(document, 'click', (event) => {
+        // 同时监听 click 和 touchend 事件（移动端支持）
+        const handleTagClick = (event) => {
             const target = event.target;
             
             // 调试：输出点击的元素信息
@@ -341,7 +369,8 @@ module.exports = class TagClickSearchPlugin extends Plugin {
                     tagName: target.tagName,
                     className: target.className,
                     href: target.getAttribute('href'),
-                    text: target.textContent
+                    text: target.textContent,
+                    platform: this.app.isMobile ? 'mobile' : 'desktop'
                 });
             }
 
@@ -378,7 +407,16 @@ module.exports = class TagClickSearchPlugin extends Plugin {
                 }
                 return;
             }
-        }, true); // 使用捕获阶段
+        };
+        
+        // 桌面端使用 click 事件
+        this.registerDomEvent(document, 'click', handleTagClick, true);
+        
+        // 移动端额外监听 touchend 事件
+        if (this.app.isMobile) {
+            console.log('Tag Click Search: 移动端模式，注册 touchend 事件');
+            this.registerDomEvent(document, 'touchend', handleTagClick, true);
+        }
     }
 
     // 提取完整标签（从编辑器的 .cm-hashtag 元素）
@@ -442,22 +480,45 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         return null;
     }
 
-    // 搜索标签并显示结果
-    async searchAndDisplayTag(tag) {
+    // 搜索并显示结果（支持标签和标题搜索）
+    async searchAndDisplay(query) {
         try {
-            console.log(`Searching for tag: #${tag}`);
-
-            // 清理标签名称
-            const cleanTag = tag.replace(/^#/, '').trim().toLowerCase();
+            const trimmedQuery = query.trim();
             
-            if (!cleanTag) {
-                console.warn('Tag Click Search: 标签名称为空');
-                return;
+            // 判断是标签搜索还是标题搜索
+            if (trimmedQuery.startsWith('#')) {
+                // 带 # 号，按标签搜索
+                const tag = trimmedQuery.substring(1).trim().toLowerCase();
+                if (!tag) {
+                    console.warn('Tag Click Search: 标签名称为空');
+                    return;
+                }
+                await this.searchByTag(tag);
+            } else {
+                // 不带 # 号，按标题搜索
+                if (!trimmedQuery) {
+                    console.warn('Tag Click Search: 搜索关键词为空');
+                    return;
+                }
+                await this.searchByTitle(trimmedQuery);
             }
+        } catch (error) {
+            console.error('Tag Click Search: 搜索时出错', error);
+            new Notice(`搜索时出错: ${error.message}`);
+        }
+    }
 
-            // 获取包含该标签的所有文件
-            const filesWithTag = [];
-            const allFiles = this.app.vault.getMarkdownFiles();
+    // 按标签搜索
+    async searchByTag(tag) {
+        console.log(`🔍 Searching for tag: #${tag}`);
+
+        // 规范化搜索标签（去除所有空格，转小写）
+        const normalizedSearchTag = tag.replace(/\s+/g, '').toLowerCase();
+        console.log(`📝 Normalized search tag: "${normalizedSearchTag}"`);
+
+        // 获取包含该标签的所有文件
+        const filesWithTag = [];
+        const allFiles = this.app.vault.getMarkdownFiles();
 
         for (const file of allFiles) {
             const cache = this.app.metadataCache.getFileCache(file);
@@ -465,26 +526,97 @@ module.exports = class TagClickSearchPlugin extends Plugin {
 
             // 检查内容中的标签
             const hasTags = cache.tags && cache.tags.some(t => {
-                const tagName = t.tag.toLowerCase().replace(/^#/, '');
-                return tagName === cleanTag;
+                const tagName = t.tag.toLowerCase().replace(/^#/, '').replace(/\s+/g, '');
+                const match = tagName === normalizedSearchTag;
+                if (match) {
+                    console.log(`✅ Found match in content tags: ${t.tag} -> ${tagName}`);
+                }
+                return match;
             });
 
             // 检查 frontmatter 中的标签
             let hasFrontmatterTags = false;
             if (cache.frontmatter && cache.frontmatter.tags) {
                 if (Array.isArray(cache.frontmatter.tags)) {
-                    hasFrontmatterTags = cache.frontmatter.tags.some(t => 
-                        t != null && t.toString().toLowerCase() === cleanTag
-                    );
+                    hasFrontmatterTags = cache.frontmatter.tags.some(t => {
+                        if (t == null) return false;
+                        const tagName = t.toString().toLowerCase().replace(/\s+/g, '');
+                        const match = tagName === normalizedSearchTag;
+                        if (match) {
+                            console.log(`✅ Found match in frontmatter tags (array): ${t} -> ${tagName}`);
+                        }
+                        return match;
+                    });
                 } else if (cache.frontmatter.tags != null) {
-                    hasFrontmatterTags = cache.frontmatter.tags.toString().toLowerCase() === cleanTag;
+                    const tagName = cache.frontmatter.tags.toString().toLowerCase().replace(/\s+/g, '');
+                    hasFrontmatterTags = tagName === normalizedSearchTag;
+                    if (hasFrontmatterTags) {
+                        console.log(`✅ Found match in frontmatter tags (single): ${cache.frontmatter.tags} -> ${tagName}`);
+                    }
                 }
             }
 
             if (hasTags || hasFrontmatterTags) {
                 // 获取 title（优先使用 frontmatter 的 title）
-                const title = cache.frontmatter?.title || file.basename;
+                let title = cache.frontmatter?.title || file.basename;
+                
+                // 确保 title 是字符串类型
+                if (title != null && typeof title !== 'string') {
+                    title = String(title);
+                }
+                
                 filesWithTag.push({
+                    file: file,
+                    title: title || file.basename,
+                    cache: cache
+                });
+            }
+        }
+
+        // 按 title 排序（支持中文）
+        filesWithTag.sort((a, b) => {
+            const titleA = String(a.title || '');
+            const titleB = String(b.title || '');
+            return titleA.localeCompare(titleB, 'zh-CN', { numeric: true });
+        });
+
+        console.log(`Found ${filesWithTag.length} files with tag #${tag}`);
+
+        // 显示结果
+        await this.openSearchView(tag, filesWithTag, 'tag');
+    }
+
+    // 按标题搜索（支持空格分词的模糊搜索）
+    async searchByTitle(keyword) {
+        console.log(`Searching for title: ${keyword}`);
+
+        // 将搜索关键词按空格分词
+        const keywords = keyword.trim().split(/\s+/).filter(k => k.length > 0);
+        const filesWithTitle = [];
+        const allFiles = this.app.vault.getMarkdownFiles();
+
+        for (const file of allFiles) {
+            const cache = this.app.metadataCache.getFileCache(file);
+            
+            // 获取 title（优先使用 frontmatter 的 title）
+            let title = cache?.frontmatter?.title || file.basename;
+            
+            // 确保 title 是字符串类型
+            if (title != null && typeof title !== 'string') {
+                title = String(title);
+            }
+            
+            if (!title) continue;
+            
+            const titleLower = title.toLowerCase();
+            
+            // 检查是否所有关键词都在标题中（不考虑顺序）
+            const allKeywordsMatch = keywords.every(kw => 
+                titleLower.includes(kw.toLowerCase())
+            );
+            
+            if (allKeywordsMatch) {
+                filesWithTitle.push({
                     file: file,
                     title: title,
                     cache: cache
@@ -493,33 +625,54 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         }
 
         // 按 title 排序（支持中文）
-        filesWithTag.sort((a, b) => {
-            return a.title.localeCompare(b.title, 'zh-CN', { numeric: true });
+        filesWithTitle.sort((a, b) => {
+            const titleA = String(a.title || '');
+            const titleB = String(b.title || '');
+            return titleA.localeCompare(titleB, 'zh-CN', { numeric: true });
         });
 
-        console.log(`Found ${filesWithTag.length} files with tag #${tag}`);
+        console.log(`Found ${filesWithTitle.length} files with title containing all keywords: ${keywords.join(', ')}`);
 
         // 显示结果
-        await this.openTagSearchView(cleanTag, filesWithTag);
-        
-        } catch (error) {
-            console.error('Tag Click Search: 搜索标签时出错', error);
-            new Notice(`搜索标签 #${tag} 时出错: ${error.message}`);
-        }
+        await this.openSearchView(keyword, filesWithTitle, 'title');
     }
 
-    // 打开标签搜索结果视图
-    async openTagSearchView(tag, files) {
-        // 查找现有的标签搜索视图
+    // 搜索标签并显示结果（保留向后兼容）
+    async searchAndDisplayTag(tag) {
+        await this.searchByTag(tag);
+    }
+
+    // 打开搜索结果视图
+    async openSearchView(query, files, searchType) {
+        console.log(`📱 Opening search view, platform: ${this.app.isMobile ? 'mobile' : 'desktop'}`);
+        
+        // 查找现有的搜索视图
         const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_TAG_SEARCH);
         
         let leaf;
         if (existing.length > 0) {
             // 复用现有视图
+            console.log('♻️ Reusing existing view');
             leaf = existing[0];
         } else {
-            // 创建新视图（在右侧边栏）
-            leaf = this.app.workspace.getRightLeaf(false);
+            // 创建新视图
+            if (this.app.isMobile) {
+                // 移动端：使用 window 模式（弹出式窗口）
+                console.log('📱 Mobile: Creating window leaf');
+                // 尝试使用 popover 或 window 类型的 leaf
+                const existingLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TAG_SEARCH);
+                if (existingLeaves.length === 0) {
+                    // 在移动端，使用 split 但设置为 horizontal（水平分割）
+                    // 这样可以让搜索结果占据下半部分，手势向下可以关闭
+                    leaf = this.app.workspace.getLeaf('split', 'horizontal');
+                } else {
+                    leaf = existingLeaves[0];
+                }
+            } else {
+                // 桌面端：在右侧边栏打开
+                console.log('🖥️ Desktop: Opening in right sidebar');
+                leaf = this.app.workspace.getRightLeaf(false);
+            }
         }
 
         // 设置视图
@@ -531,14 +684,22 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         // 更新视图内容
         const view = leaf.view;
         if (view instanceof TagSearchResultsView) {
-            view.tag = tag;
+            view.tag = query;
             view.files = files;
             view.plugin = this;
+            view.searchType = searchType;
             await view.onOpen();
         }
 
         // 显示视图
         this.app.workspace.revealLeaf(leaf);
+        
+        console.log('✅ Search view opened successfully');
+    }
+
+    // 打开标签搜索结果视图（保留向后兼容）
+    async openTagSearchView(tag, files) {
+        await this.openSearchView(tag, files, 'tag');
     }
 
     // 添加样式
@@ -548,6 +709,43 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         style.textContent = `
             .tag-search-results-container {
                 padding: 10px;
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+            }
+
+            /* 移动端底部关闭按钮 */
+            .tag-search-mobile-footer {
+                position: sticky;
+                bottom: 0;
+                z-index: 10;
+                background-color: var(--background-primary);
+                padding: 10px;
+                margin: 10px -10px -10px -10px;
+                border-top: 1px solid var(--background-modifier-border);
+            }
+
+            .tag-search-close-button {
+                width: 100%;
+                padding: 14px;
+                background-color: var(--interactive-accent);
+                color: var(--text-on-accent);
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 16px;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                transition: all 0.2s;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            }
+
+            .tag-search-close-button:active {
+                background-color: var(--interactive-accent-hover);
+                transform: scale(0.98);
             }
 
             .tag-search-input-container {
