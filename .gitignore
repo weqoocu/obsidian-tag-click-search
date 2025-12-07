@@ -64,6 +64,14 @@ RELEASE_NOTES_v*.md
 *password*
 *credential*
 
-# Scripts (optional, can be versioned)
-# release.sh
-# release-manual.sh
+# 开发文档（仅保留在本地，不提交到 GitHub）
+发布流程说明.md
+HOW_TO_RELEASE.md
+RELEASE_GUIDE.md
+RELEASE_AUTO.md
+PUBLISH_GUIDE.md
+
+# 发布脚本（保留 publish.sh 即可，其他不提交）
+release.sh
+release-auto.sh
+release-manual.sh
