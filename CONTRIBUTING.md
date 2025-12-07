@@ -2,35 +2,39 @@
 
 ## 🚀 发布新版本
 
-### 快速发布
+### 步骤
 
+1. **更新版本号**
+
+编辑以下三个文件：
 ```bash
-# 1. 更新版本号（编辑这3个文件）
-vim manifest.json    # 修改 "version"
-vim package.json     # 修改 "version"
-vim versions.json    # 添加新版本
-
-# 2. 一键发布
-bash publish.sh
+vim manifest.json    # 修改 "version" 字段
+vim package.json     # 修改 "version" 字段
+vim versions.json    # 添加新版本记录
 ```
 
-### 发布流程说明
+2. **更新 CHANGELOG.md**
 
-`publish.sh` 会自动完成：
-1. ✅ 清理临时文件（`cleanup.sh`）
-2. ✅ 安全检查（`pre-release-check.sh`）
-   - 检查版本号一致性
-   - 扫描敏感信息
-   - 检查不相关文件
-3. ✅ 提交到 GitHub
-4. ✅ 创建 Release（通过 GitHub Actions）
+记录本次更新的内容。
 
-### 安全检查
+3. **提交代码**
 
-预发布检查会扫描：
-- 🔒 敏感信息：password, token, api_key, secret 等
-- 🗑️ 临时文件：.env, .log, .DS_Store 等
-- ✅ 版本号一致性
+```bash
+git add .
+git commit -m "v1.4.3: 新功能描述"
+git push origin main
+```
+
+4. **创建 Release**
+
+推送 tag 后，GitHub Actions 会自动创建 Release：
+
+```bash
+git tag -a "1.4.3" -m "v1.4.3: 新功能描述"
+git push origin 1.4.3
+```
+
+等待 1-2 分钟，Release 会自动创建完成。
 
 ### GitHub Actions
 
@@ -52,21 +56,19 @@ bash publish.sh
 ├── README.md           # 用户文档
 ├── CHANGELOG.md        # 更新日志
 ├── LICENSE             # 开源许可
-├── publish.sh          # 一键发布脚本
-├── cleanup.sh          # 清理脚本
-├── pre-release-check.sh # 安全检查脚本
 └── .github/
     └── workflows/
-        └── release.yml  # 自动 Release
+        └── release.yml  # GitHub Actions 自动发布
 ```
 
 ### 开发流程
 
 1. 修改代码
 2. 测试功能
-3. 更新版本号
+3. 更新版本号（3个文件）
 4. 更新 CHANGELOG.md
-5. 运行 `bash publish.sh`
+5. 提交并推送代码
+6. 创建 tag 触发自动发布
 
 ## 🤝 提交 Pull Request
 
