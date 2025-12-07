@@ -320,8 +320,17 @@ class TagSearchResultsView extends ItemView {
                         const content = await this.plugin.app.vault.read(file);
                         // 去除 YAML frontmatter
                         const contentWithoutYaml = this.removeYamlFrontmatter(content);
-                        const title = file.basename;
-                        contents.push(`# ${title}\n\n${contentWithoutYaml}`);
+                        // 清理特殊内容（图片、iframe、mactagmap、base引用等）
+                        const cleanedContent = this.cleanContent(contentWithoutYaml);
+                        
+                        // 从文件列表中找到对应的 item，获取其 title
+                        const fileItem = this.files.find(item => item.file.path === filePath);
+                        const title = fileItem ? fileItem.title : file.basename;
+                        
+                        // 只添加有实际内容的笔记
+                        if (cleanedContent.trim()) {
+                            contents.push(`# ${title}\n\n${cleanedContent}`);
+                        }
                     }
                 }
 
@@ -415,6 +424,35 @@ class TagSearchResultsView extends ItemView {
         // 匹配 YAML frontmatter (以 --- 开始和结束)
         const yamlRegex = /^---\s*\n[\s\S]*?\n---\s*\n/;
         return content.replace(yamlRegex, '').trim();
+    }
+
+    // 清理内容，移除特殊元素（图片、iframe、mactagmap、base引用等）
+    cleanContent(content) {
+        let cleaned = content;
+
+        // 1. 移除 iframe 标签
+        cleaned = cleaned.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+
+        // 2. 移除 mactagmap 短代码
+        cleaned = cleaned.replace(/\[mctagmap[^\]]*\]/gi, '');
+
+        // 3. 移除 Obsidian base 引用（![[xxx.base#xxx]]）
+        cleaned = cleaned.replace(/!\[\[.*?\.base#.*?\]\]/gi, '');
+
+        // 4. 移除图片
+        // Markdown 图片: ![alt](url) 或 ![|width](url)
+        cleaned = cleaned.replace(/!\[.*?\]\([^)]+\)/g, '');
+        
+        // Obsidian 图片嵌入: ![[image.png]] 或 ![[image.png|width]]
+        cleaned = cleaned.replace(/!\[\[(?!.*\.base#)[^\]]*\.(png|jpg|jpeg|gif|bmp|svg|webp)(?:\|[^\]]*)?\]\]/gi, '');
+
+        // 5. 移除多余的空行（连续的空行压缩为单个空行）
+        cleaned = cleaned.replace(/\n\s*\n\s*\n/g, '\n\n');
+
+        // 6. 移除行首行尾空白
+        cleaned = cleaned.trim();
+
+        return cleaned;
     }
 }
 
