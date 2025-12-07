@@ -57,6 +57,13 @@ jspm_packages/
 release-*/
 RELEASE_NOTES_v*.md
 
+# Sensitive files (如果不小心创建了这些文件)
+.env
+.env.*
+*secret*
+*password*
+*credential*
+
 # Scripts (optional, can be versioned)
 # release.sh
 # release-manual.sh

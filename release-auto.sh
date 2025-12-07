@@ -15,16 +15,23 @@ NC='\033[0m' # No Color
 echo -e "${GREEN}🚀 自动发布 Obsidian 插件${NC}"
 echo "=================================="
 
+# 运行预发布检查
+echo -e "${BLUE}🔍 运行预发布检查...${NC}"
+echo ""
+
+if bash pre-release-check.sh; then
+    echo ""
+    echo -e "${GREEN}✅ 预发布检查通过${NC}"
+    echo ""
+else
+    echo ""
+    echo -e "${RED}❌ 预发布检查未通过，已取消发布${NC}"
+    exit 1
+fi
+
 # 获取当前版本号
 VERSION=$(node -p "require('./manifest.json').version")
 echo -e "${GREEN}📦 当前版本: v${VERSION}${NC}"
-
-# 检查是否有未提交的更改
-if [[ -n $(git status -s) ]]; then
-    echo -e "${RED}❌ 有未提交的更改，请先提交${NC}"
-    git status -s
-    exit 1
-fi
 
 # 检查是否在 main 分支
 BRANCH=$(git branch --show-current)
