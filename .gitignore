@@ -70,6 +70,10 @@ HOW_TO_RELEASE.md
 RELEASE_GUIDE.md
 RELEASE_AUTO.md
 PUBLISH_GUIDE.md
+CONTRIBUTING.md
+
+# 开发配置（仅保留在本地，不提交到 GitHub）
+package.json
 
 # 开发脚本（仅保留在本地，不提交到 GitHub）
 *.sh
