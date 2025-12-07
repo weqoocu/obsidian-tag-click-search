@@ -10,6 +10,7 @@ class TagSearchResultsView extends ItemView {
         this.files = files;
         this.plugin = plugin;
         this.searchType = searchType; // 'tag' 或 'title'
+        this.selectedFiles = new Set(); // 存储选中的文件
     }
 
     getViewType() {
@@ -229,10 +230,29 @@ class TagSearchResultsView extends ItemView {
                 : `包含标签 #${this.tag} 的笔记`;
         }
         header.createEl('h4', { text: headerText });
-        header.createEl('div', { 
+        
+        const headerActions = header.createEl('div', { cls: 'tag-search-header-actions' });
+        
+        const countEl = headerActions.createEl('div', { 
             cls: 'tag-search-count',
             text: `共 ${this.files.length} 个文件`
         });
+
+        // 批量操作按钮区域
+        const bulkActions = headerActions.createEl('div', { cls: 'tag-search-bulk-actions' });
+        
+        // 全选/取消全选按钮
+        const selectAllBtn = bulkActions.createEl('button', {
+            text: '全选',
+            cls: 'tag-search-action-button'
+        });
+        
+        // 复制选中内容按钮
+        const copyBtn = bulkActions.createEl('button', {
+            text: '复制选中 (0)',
+            cls: 'tag-search-action-button tag-search-copy-button'
+        });
+        copyBtn.disabled = true;
 
         // 文件列表
         const list = container.createEl('div', { 
@@ -247,6 +267,77 @@ class TagSearchResultsView extends ItemView {
             return;
         }
 
+        // 更新复制按钮状态和文本
+        const updateCopyButton = () => {
+            const count = this.selectedFiles.size;
+            copyBtn.textContent = count > 0 ? `复制选中 (${count})` : '复制选中 (0)';
+            copyBtn.disabled = count === 0;
+            
+            // 更新全选按钮文本
+            selectAllBtn.textContent = count === this.files.length ? '取消全选' : '全选';
+        };
+
+        // 全选/取消全选功能
+        selectAllBtn.addEventListener('click', () => {
+            const shouldSelectAll = this.selectedFiles.size !== this.files.length;
+            
+            if (shouldSelectAll) {
+                // 全选
+                this.files.forEach(item => this.selectedFiles.add(item.file.path));
+            } else {
+                // 取消全选
+                this.selectedFiles.clear();
+            }
+            
+            // 更新所有复选框状态
+            const checkboxes = list.querySelectorAll('.tag-search-checkbox');
+            checkboxes.forEach((checkbox, index) => {
+                checkbox.checked = shouldSelectAll;
+                const fileItem = checkbox.closest('.tag-search-item');
+                if (shouldSelectAll) {
+                    fileItem?.addClass('tag-search-item-selected');
+                } else {
+                    fileItem?.removeClass('tag-search-item-selected');
+                }
+            });
+            
+            updateCopyButton();
+        });
+
+        // 复制选中内容功能
+        copyBtn.addEventListener('click', async () => {
+            if (this.selectedFiles.size === 0) {
+                new Notice('请先选择要复制的笔记');
+                return;
+            }
+
+            try {
+                const contents = [];
+                
+                for (const filePath of this.selectedFiles) {
+                    const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+                    if (file && file.extension === 'md') {
+                        const content = await this.plugin.app.vault.read(file);
+                        // 去除 YAML frontmatter
+                        const contentWithoutYaml = this.removeYamlFrontmatter(content);
+                        const title = file.basename;
+                        contents.push(`# ${title}\n\n${contentWithoutYaml}`);
+                    }
+                }
+
+                if (contents.length > 0) {
+                    const finalContent = contents.join('\n\n---\n\n');
+                    await navigator.clipboard.writeText(finalContent);
+                    new Notice(`已复制 ${contents.length} 个笔记到剪贴板`);
+                } else {
+                    new Notice('没有可复制的内容');
+                }
+            } catch (error) {
+                console.error('复制失败:', error);
+                new Notice('复制失败: ' + error.message);
+            }
+        });
+
         for (const item of this.files) {
             const fileItem = list.createEl('div', { 
                 cls: 'tree-item nav-file tag-search-item'
@@ -256,15 +347,41 @@ class TagSearchResultsView extends ItemView {
                 cls: 'tree-item-self is-clickable nav-file-title'
             });
 
+            // 复选框
+            const checkbox = fileContent.createEl('input', {
+                type: 'checkbox',
+                cls: 'tag-search-checkbox'
+            });
+            
+            checkbox.addEventListener('change', (e) => {
+                e.stopPropagation();
+                
+                if (checkbox.checked) {
+                    this.selectedFiles.add(item.file.path);
+                    fileItem.addClass('tag-search-item-selected');
+                } else {
+                    this.selectedFiles.delete(item.file.path);
+                    fileItem.removeClass('tag-search-item-selected');
+                }
+                
+                updateCopyButton();
+            });
+            
+            checkbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+
             // 文件名/标题
             const titleEl = fileContent.createEl('div', {
                 cls: 'tree-item-inner nav-file-title-content',
                 text: item.title
             });
 
-            // 点击打开文件
-            fileContent.addEventListener('click', async () => {
-                await this.app.workspace.getLeaf().openFile(item.file);
+            // 点击打开文件（点击非复选框区域）
+            fileContent.addEventListener('click', async (e) => {
+                if (e.target !== checkbox) {
+                    await this.app.workspace.getLeaf().openFile(item.file);
+                }
             });
 
             // 悬停显示路径
@@ -291,6 +408,13 @@ class TagSearchResultsView extends ItemView {
 
     async onClose() {
         // 清理
+    }
+
+    // 去除 YAML frontmatter
+    removeYamlFrontmatter(content) {
+        // 匹配 YAML frontmatter (以 --- 开始和结束)
+        const yamlRegex = /^---\s*\n[\s\S]*?\n---\s*\n/;
+        return content.replace(yamlRegex, '').trim();
     }
 }
 
@@ -878,13 +1002,58 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             }
 
             .tag-search-header h4 {
-                margin: 0 0 5px 0;
+                margin: 0 0 10px 0;
                 color: var(--text-normal);
+            }
+
+            .tag-search-header-actions {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
             }
 
             .tag-search-count {
                 font-size: 0.9em;
                 color: var(--text-muted);
+            }
+
+            .tag-search-bulk-actions {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+            }
+
+            .tag-search-action-button {
+                padding: 6px 12px;
+                background-color: var(--interactive-normal);
+                color: var(--text-normal);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 13px;
+                transition: all 0.2s;
+            }
+
+            .tag-search-action-button:hover:not(:disabled) {
+                background-color: var(--interactive-hover);
+                border-color: var(--interactive-accent);
+            }
+
+            .tag-search-action-button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+            .tag-search-copy-button:not(:disabled) {
+                background-color: var(--interactive-accent);
+                color: var(--text-on-accent);
+                border-color: var(--interactive-accent);
+            }
+
+            .tag-search-copy-button:not(:disabled):hover {
+                background-color: var(--interactive-accent-hover);
             }
 
             .tag-search-list {
@@ -895,10 +1064,16 @@ module.exports = class TagClickSearchPlugin extends Plugin {
 
             .tag-search-item {
                 border-radius: 4px;
+                transition: background-color 0.2s;
             }
 
             .tag-search-item:hover {
                 background-color: var(--background-modifier-hover);
+            }
+
+            .tag-search-item-selected {
+                background-color: var(--background-modifier-hover);
+                border-left: 3px solid var(--interactive-accent);
             }
 
             .tag-search-item .tree-item-self {
@@ -907,6 +1082,21 @@ module.exports = class TagClickSearchPlugin extends Plugin {
                 display: flex;
                 align-items: center;
                 gap: 8px;
+            }
+
+            .tag-search-checkbox {
+                flex-shrink: 0;
+                width: 16px;
+                height: 16px;
+                cursor: pointer;
+                margin: 0;
+            }
+
+            .tag-search-item .tree-item-inner {
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
 
             .tag-search-filename {

@@ -1,7 +1,7 @@
 {
   "name": "obsidian-tag-click-search",
-  "version": "1.3.7",
-  "description": "点击标签搜索笔记，支持标签搜索（#标签）和标题搜索（关键词）",
+  "version": "1.4.0",
+  "description": "点击标签搜索笔记，支持标签搜索（#标签）和标题搜索（关键词），支持批量复制笔记内容",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

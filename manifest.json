@@ -1,9 +1,9 @@
 {
   "id": "tag-click-search",
   "name": "Tag Click Search",
-  "version": "1.3.7",
+  "version": "1.4.0",
   "minAppVersion": "0.15.0",
-  "description": "点击标签搜索笔记，支持标签搜索（#标签）和标题搜索（关键词）",
+  "description": "点击标签搜索笔记，支持标签搜索（#标签）和标题搜索（关键词），支持批量复制笔记内容",
   "author": "酷口家数字花园",
   "authorUrl": "",
   "isDesktopOnly": false
