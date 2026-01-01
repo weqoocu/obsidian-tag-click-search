@@ -1,4 +1,4 @@
-const { Plugin, ItemView, WorkspaceLeaf, Notice } = require('obsidian');
+const { Plugin, ItemView, WorkspaceLeaf, Notice, Setting, PluginSettingTab, Menu } = require('obsidian');
 
 const VIEW_TYPE_TAG_SEARCH = 'tag-search-results-view';
 
@@ -786,6 +786,13 @@ class TagSearchResultsView extends ItemView {
         });
         copyBtn.disabled = true;
 
+        // 导出文件按钮
+        const exportBtn = bulkActions.createEl('button', {
+            text: '导出文件 (0)',
+            cls: 'tag-search-action-button tag-search-export-button'
+        });
+        exportBtn.disabled = true;
+
         // 文件列表
         const list = container.createEl('div', { 
             cls: 'tag-search-list nav-files-container'
@@ -804,6 +811,10 @@ class TagSearchResultsView extends ItemView {
             const count = this.selectedFiles.size;
             copyBtn.textContent = count > 0 ? `复制选中 (${count})` : '复制选中 (0)';
             copyBtn.disabled = count === 0;
+            
+            // 更新导出按钮
+            exportBtn.textContent = count > 0 ? `导出文件 (${count})` : '导出文件 (0)';
+            exportBtn.disabled = count === 0;
             
             // 更新全选按钮文本
             selectAllBtn.textContent = count === this.files.length ? '取消全选' : '全选';
@@ -876,6 +887,122 @@ class TagSearchResultsView extends ItemView {
             } catch (error) {
                 console.error('复制失败:', error);
                 new Notice('复制失败: ' + error.message);
+            }
+        });
+
+        // 文件导出功能
+        exportBtn.addEventListener('click', async () => {
+            if (this.selectedFiles.size === 0) {
+                new Notice('请先选择要导出的笔记');
+                return;
+            }
+
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                
+                // 导出目录路径 - 优先使用标签特定路径，否则使用默认路径
+                let exportPath = '';
+                const tagExportPaths = this.plugin.settings?.tagExportPaths || {};
+                
+                // 从搜索条件中提取所有标签，支持多标签搜索
+                // 搜索条件可能是: "#标签1 #标签2" 或 "tag:标签1 tag:标签2" 等格式
+                if (this.tag) {
+                    // 提取所有标签（支持 #标签 和 tag:标签 格式）
+                    const searchTags = [];
+                    
+                    // 匹配 #标签 格式
+                    const hashTagMatches = this.tag.match(/#[\w\u4e00-\u9fa5\/\-]+/g);
+                    if (hashTagMatches) {
+                        hashTagMatches.forEach(t => searchTags.push(t.replace(/^#/, '')));
+                    }
+                    
+                    // 匹配 tag:标签 格式
+                    const tagColonMatches = this.tag.match(/tag:[\w\u4e00-\u9fa5\/\-]+/gi);
+                    if (tagColonMatches) {
+                        tagColonMatches.forEach(t => searchTags.push(t.replace(/^tag:/i, '')));
+                    }
+                    
+                    // 如果没有匹配到特定格式，将整个搜索词作为标签（兼容单标签搜索）
+                    if (searchTags.length === 0 && this.searchType === 'tag') {
+                        searchTags.push(this.tag.replace(/^#/, ''));
+                    }
+                    
+                    console.log('📌 搜索中的标签:', searchTags);
+                    
+                    // 遍历搜索中的每个标签，查找匹配的导出路径
+                    for (const searchTag of searchTags) {
+                        const normalizedSearchTag = searchTag.toLowerCase();
+                        
+                        for (const [configTag, configPath] of Object.entries(tagExportPaths)) {
+                            const normalizedConfigTag = configTag.toLowerCase().replace(/^#/, '');
+                            
+                            // 精确匹配或层级匹配
+                            if (normalizedSearchTag === normalizedConfigTag || 
+                                normalizedSearchTag.startsWith(normalizedConfigTag + '/')) {
+                                exportPath = configPath;
+                                console.log(`📁 标签 "${searchTag}" 匹配到导出路径: ${exportPath}`);
+                                break;
+                            }
+                        }
+                        
+                        // 找到匹配的路径就停止搜索
+                        if (exportPath) break;
+                    }
+                }
+                
+                // 如果没有匹配到标签特定路径，使用默认路径
+                if (!exportPath) {
+                    exportPath = this.plugin.settings?.exportPath || 
+                        path.join(path.dirname(this.plugin.app.vault.adapter.basePath), 'docs', 'docs');
+                }
+                
+                console.log('Export path:', exportPath);
+                
+                // 确保目录存在
+                if (!fs.existsSync(exportPath)) {
+                    fs.mkdirSync(exportPath, { recursive: true });
+                }
+                
+                let successCount = 0;
+                let errorCount = 0;
+                
+                for (const filePath of this.selectedFiles) {
+                    const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+                    if (file && file.extension === 'md') {
+                        try {
+                            const content = await this.plugin.app.vault.read(file);
+                            
+                            // 从文件列表中找到对应的 item，获取其 title
+                            const fileItem = this.files.find(item => item.file.path === filePath);
+                            const title = fileItem ? fileItem.title : file.basename;
+                            
+                            // 处理内容：转换 Obsidian 特有语法为标准 Markdown
+                            const processedContent = this.processForExport(content, title);
+                            
+                            // 使用原始文件名（保留 Obsidian 的文件名）
+                            const originalFileName = file.basename + '.md';
+                            const targetPath = path.join(exportPath, originalFileName);
+                            
+                            // 写入文件
+                            fs.writeFileSync(targetPath, processedContent, 'utf8');
+                            console.log(`✅ Exported: ${originalFileName} (${title})`);
+                            successCount++;
+                        } catch (err) {
+                            console.error(`❌ Failed to export ${filePath}:`, err);
+                            errorCount++;
+                        }
+                    }
+                }
+                
+                if (successCount > 0) {
+                    new Notice(`✅ 已导出 ${successCount} 个笔记到 ${exportPath}${errorCount > 0 ? `，${errorCount} 个失败` : ''}`);
+                } else {
+                    new Notice('❌ 导出失败，请检查控制台日志');
+                }
+            } catch (error) {
+                console.error('文件导出失败:', error);
+                new Notice('导出失败: ' + error.message);
             }
         });
 
@@ -1248,6 +1375,10 @@ class TagSearchResultsView extends ItemView {
 
     // 刷新文件列表显示
     refreshFileList(container) {
+        // 保存当前滚动位置
+        const oldList = container.querySelector('.tag-search-list');
+        const scrollTop = oldList ? oldList.scrollTop : 0;
+        
         // 重新排序文件列表（按 title）
         this.files.sort((a, b) => {
             const titleA = String(a.title || '');
@@ -1263,7 +1394,6 @@ class TagSearchResultsView extends ItemView {
         });
         
         // 找到列表容器并重新渲染
-        const oldList = container.querySelector('.tag-search-list');
         const oldHeader = container.querySelector('.tag-search-header');
         
         if (oldList) oldList.remove();
@@ -1271,6 +1401,12 @@ class TagSearchResultsView extends ItemView {
         
         // 重新渲染头部和列表
         this.renderHeaderAndList(container);
+        
+        // 恢复滚动位置
+        const newList = container.querySelector('.tag-search-list');
+        if (newList && scrollTop > 0) {
+            newList.scrollTop = scrollTop;
+        }
     }
 
     // 去除 YAML frontmatter
@@ -1308,12 +1444,921 @@ class TagSearchResultsView extends ItemView {
 
         return cleaned;
     }
+
+    // 处理内容以适配标准 Markdown 导出
+    processForExport(content, title) {
+        let processed = content;
+        
+        // 1. 提取或创建 frontmatter
+        const yamlMatch = processed.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+        let frontmatter = {};
+        let bodyContent = processed;
+        
+        if (yamlMatch) {
+            // 解析现有 frontmatter
+            const yamlContent = yamlMatch[1];
+            bodyContent = processed.replace(yamlMatch[0], '');
+            
+            // 简单解析 YAML
+            yamlContent.split('\n').forEach(line => {
+                const match = line.match(/^(\w+):\s*(.*)$/);
+                if (match) {
+                    let value = match[2].trim();
+                    // 处理数组格式 [item1, item2]
+                    if (value.startsWith('[') && value.endsWith(']')) {
+                        value = value.slice(1, -1).split(',').map(s => s.trim());
+                    }
+                    frontmatter[match[1]] = value;
+                }
+            });
+        }
+        
+        // 确保有 title
+        if (!frontmatter.title) {
+            frontmatter.title = title;
+        }
+        
+        // 2. 转换 Obsidian wiki links [[link]] 为标准 Markdown [link](link)
+        bodyContent = bodyContent.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (match, link, alias) => {
+            const displayText = alias || link;
+            // 转换为相对链接
+            const safeName = link.replace(/[^a-zA-Z0-9\u4e00-\u9fa5\-_]/g, '-').toLowerCase();
+            return `[${displayText}](./${safeName})`;
+        });
+        
+        // 3. 转换 Obsidian 图片嵌入 ![[image.png]] 为标准 Markdown
+        bodyContent = bodyContent.replace(/!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (match, imagePath, size) => {
+            // 保留图片，但转换格式
+            return `![${imagePath}](./images/${imagePath})`;
+        });
+        
+        // 4. 移除 Obsidian 特有的标签格式中的空格问题
+        // 保留标签但确保格式正确
+        
+        // 5. 移除一些 Obsidian 特有的语法
+        // 移除 base 引用
+        bodyContent = bodyContent.replace(/!\[\[.*?\.base#.*?\]\]/gi, '');
+        // 移除 mactagmap
+        bodyContent = bodyContent.replace(/\[mctagmap[^\]]*\]/gi, '');
+        
+        // 6. 清理多余空行
+        bodyContent = bodyContent.replace(/\n\s*\n\s*\n/g, '\n\n').trim();
+        
+        // 7. 构建新的 frontmatter
+        let newFrontmatter = '---\n';
+        newFrontmatter += `title: "${frontmatter.title}"\n`;
+        if (frontmatter.tags) {
+            const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [frontmatter.tags];
+            newFrontmatter += `tags:\n${tags.map(t => `  - ${t}`).join('\n')}\n`;
+        }
+        newFrontmatter += `lastUpdated: true\n`;
+        newFrontmatter += '---\n\n';
+        
+        return newFrontmatter + bodyContent;
+    }
+
+    // 生成安全的文件名
+    sanitizeFileName(name) {
+        return name
+            .replace(/[<>:"/\\|?*]/g, '-')  // 替换非法字符
+            .replace(/\s+/g, '-')            // 空格替换为连字符
+            .replace(/-+/g, '-')             // 多个连字符合并
+            .replace(/^-|-$/g, '')           // 移除首尾连字符
+            .substring(0, 100);              // 限制长度
+    }
+}
+
+// 系统搜索 DOM 包装器 - 用于替换搜索结果中的标题
+class SearchDomWrapper {
+    constructor(plugin, dom, resolver) {
+        this.plugin = plugin;
+        this.dom = dom;
+        this.resolver = resolver;
+        this.enabled = true;
+        this.originalAddResult = null;
+        this.observer = null;
+        
+        this.wrap();
+        this.setupObserver();
+    }
+    
+    wrap() {
+        if (!this.dom || !this.dom.addResult) {
+            console.log('❌ SearchDomWrapper: dom.addResult 不存在');
+            return;
+        }
+        
+        this.originalAddResult = this.dom.addResult.bind(this.dom);
+        const self = this;
+        
+        this.dom.addResult = function(...args) {
+            const result = self.originalAddResult(...args);
+            const file = args[0];
+            // 延迟处理，确保 DOM 已渲染
+            setTimeout(() => self.processResult(file, result), 10);
+            return result;
+        };
+        
+        // 处理已有的搜索结果
+        this.processExistingResults();
+        console.log('✅ SearchDomWrapper: 已包装 addResult 方法');
+    }
+    
+    setupObserver() {
+        // 监听搜索结果容器的变化
+        const searchLeaf = this.plugin.app.workspace.getLeavesOfType('search')[0];
+        if (!searchLeaf?.view?.containerEl) return;
+        
+        const resultsContainer = searchLeaf.view.containerEl.querySelector('.search-results-container');
+        if (!resultsContainer) return;
+        
+        this.observer = new MutationObserver((mutations) => {
+            // 延迟处理，避免频繁刷新
+            setTimeout(() => this.processExistingResults(), 50);
+        });
+        
+        this.observer.observe(resultsContainer, { childList: true, subtree: true });
+    }
+    
+    processExistingResults() {
+        if (!this.dom.resultDomLookup) {
+            console.log('❌ SearchDomWrapper: resultDomLookup 不存在');
+            return;
+        }
+        
+        let count = 0;
+        for (const [file, item] of this.dom.resultDomLookup) {
+            if (this.processResult(file, item)) {
+                count++;
+            }
+        }
+        if (count > 0) {
+            console.log(`✅ SearchDomWrapper: 已处理 ${count} 个搜索结果的标题`);
+        }
+    }
+    
+    processResult(file, item) {
+        if (!this.enabled || !file || file.extension !== 'md') return false;
+        
+        try {
+            const title = this.resolver(file.path);
+            if (!title || title === file.basename) return false;
+            
+            // 尝试多种选择器找到标题元素
+            let node = null;
+            
+            // 方式1: item.el 下的 .tree-item-inner
+            if (item?.el) {
+                node = item.el.querySelector('.tree-item-inner');
+            }
+            
+            // 方式2: item.containerEl 下的 .tree-item-inner
+            if (!node && item?.containerEl) {
+                node = item.containerEl.querySelector('.tree-item-inner');
+            }
+            
+            // 方式3: 直接查找匹配文件名的元素
+            if (!node) {
+                const searchLeaf = this.plugin.app.workspace.getLeavesOfType('search')[0];
+                if (searchLeaf?.view?.containerEl) {
+                    const allItems = searchLeaf.view.containerEl.querySelectorAll('.tree-item-inner');
+                    for (const el of allItems) {
+                        if (el.textContent === file.basename || el.textContent === file.path) {
+                            node = el;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (node && node.textContent !== title) {
+                node.textContent = title;
+                return true;
+            }
+        } catch (e) {
+            console.error('SearchDomWrapper: Error processing result', e);
+        }
+        return false;
+    }
+    
+    disable() {
+        this.enabled = false;
+        if (this.originalAddResult && this.dom) {
+            this.dom.addResult = this.originalAddResult;
+        }
+        if (this.observer) {
+            this.observer.disconnect();
+            this.observer = null;
+        }
+    }
+    
+    refresh() {
+        this.processExistingResults();
+    }
+}
+
+// 系统搜索排序增强器 - 添加 Title 排序按钮
+class SearchSortEnhancer {
+    constructor(plugin) {
+        this.plugin = plugin;
+        this.enabled = false;
+        this.currentSortMode = null; // null, 'title-asc', 'title-desc'
+        this.sortButton = null;
+        this.layoutHandler = null;
+        this.resortDebounceTimer = null;
+        this.isSorting = false; // 防止循环
+    }
+    
+    enable() {
+        this.enabled = true;
+        
+        // 恢复之前保存的排序状态
+        this.currentSortMode = this.plugin.settings.searchSortMode || null;
+        
+        this.injectSortButton();
+        this.watchFileChanges();
+        this.watchScroll();
+        
+        // 监听布局变化，确保按钮存在
+        this.layoutHandler = this.plugin.app.workspace.on('layout-change', () => {
+            setTimeout(() => {
+                this.injectSortButton();
+                this.watchScroll();
+                // 如果有排序模式，延迟应用排序
+                if (this.currentSortMode && !this.isSorting) {
+                    this.waitAndApplySort();
+                }
+            }, 100);
+        });
+        
+        // 如果有保存的排序模式，等待搜索结果加载后应用
+        if (this.currentSortMode) {
+            this.waitAndApplySort();
+        }
+        
+        console.log('✅ 搜索排序增强已启用，排序模式:', this.currentSortMode);
+    }
+    
+    // 监听搜索结果 DOM 变化（虚拟滚动会动态添加/移除元素）
+    watchScroll() {
+        const searchLeaf = this.plugin.app.workspace.getLeavesOfType('search')[0];
+        if (!searchLeaf?.view?.containerEl) return;
+        
+        const resultsContainer = searchLeaf.view.containerEl.querySelector('.search-results-children');
+        if (!resultsContainer) return;
+        
+        // 避免重复绑定
+        if (this._domObserver) return;
+        
+        this._domObserver = new MutationObserver((mutations) => {
+            if (!this.currentSortMode || this.isSorting) return;
+            
+            // 检查是否有子节点变化（虚拟滚动添加/移除元素）
+            const hasChildChanges = mutations.some(m => m.type === 'childList' && m.addedNodes.length > 0);
+            if (!hasChildChanges) return;
+            
+            if (this.scrollDebounceTimer) {
+                clearTimeout(this.scrollDebounceTimer);
+            }
+            this.scrollDebounceTimer = setTimeout(() => {
+                console.log('🔄 DOM 变化，重新应用 Title 排序');
+                this.applySort();
+            }, 150);
+        });
+        
+        this._domObserver.observe(resultsContainer, {
+            childList: true,
+            subtree: false
+        });
+        
+        console.log('✅ 已开始监听搜索结果 DOM 变化');
+    }
+    
+    unwatchScroll() {
+        if (this._domObserver) {
+            this._domObserver.disconnect();
+            this._domObserver = null;
+        }
+        if (this.scrollDebounceTimer) {
+            clearTimeout(this.scrollDebounceTimer);
+            this.scrollDebounceTimer = null;
+        }
+    }
+    
+    // 等待搜索结果稳定后应用排序
+    waitAndApplySort(retries = 15, lastCount = -1) {
+        if (this.isSorting) return; // 防止重复调用
+        
+        const searchLeaf = this.plugin.app.workspace.getLeavesOfType('search')[0];
+        if (!searchLeaf?.view?.dom?.resultDomLookup) {
+            if (retries > 0) {
+                setTimeout(() => this.waitAndApplySort(retries - 1, lastCount), 300);
+            }
+            return;
+        }
+        
+        const resultCount = searchLeaf.view.dom.resultDomLookup.size;
+        
+        // 如果结果数量还在变化，或者还没有结果，继续等待
+        if (resultCount !== lastCount && retries > 0) {
+            setTimeout(() => this.waitAndApplySort(retries - 1, resultCount), 300);
+            return;
+        }
+        
+        // 结果已稳定，应用排序
+        if (resultCount > 0) {
+            console.log(`📊 搜索结果已稳定 (${resultCount} 项)，应用 Title 排序`);
+            // 额外延迟确保 DOM 渲染完成
+            setTimeout(() => this.applySort(), 200);
+        }
+    }
+    
+    disable() {
+        this.enabled = false;
+        this.currentSortMode = null;
+        this.removeSortButton();
+        this.unwatchFileChanges();
+        this.unwatchScroll();
+        
+        if (this.layoutHandler) {
+            this.plugin.app.workspace.offref(this.layoutHandler);
+            this.layoutHandler = null;
+        }
+        
+        if (this.resortDebounceTimer) {
+            clearTimeout(this.resortDebounceTimer);
+            this.resortDebounceTimer = null;
+        }
+        if (this.modifyDebounceTimer) {
+            clearTimeout(this.modifyDebounceTimer);
+            this.modifyDebounceTimer = null;
+        }
+        if (this.scrollDebounceTimer) {
+            clearTimeout(this.scrollDebounceTimer);
+            this.scrollDebounceTimer = null;
+        }
+    }
+    
+    // 监听文件变化事件，自动重新排序
+    watchFileChanges() {
+        if (this.fileDeleteHandler) return;
+        
+        const scheduleResort = (reason, delay = 1000) => {
+            // 只在有排序模式且不在排序中时才重新排序
+            if (!this.currentSortMode || this.isSorting) return;
+            
+            // 使用防抖，避免频繁排序
+            if (this.resortDebounceTimer) {
+                clearTimeout(this.resortDebounceTimer);
+            }
+            this.resortDebounceTimer = setTimeout(() => {
+                console.log(`🔄 检测到${reason}，重新应用 Title 排序`);
+                this.applySort();
+            }, delay);
+        };
+        
+        // 监听文件修改（使用较长的防抖时间，停止编辑3秒后才排序）
+        this.fileModifyHandler = this.plugin.app.vault.on('modify', () => {
+            if (!this.currentSortMode || this.isSorting) return;
+            
+            if (this.modifyDebounceTimer) {
+                clearTimeout(this.modifyDebounceTimer);
+            }
+            this.modifyDebounceTimer = setTimeout(() => {
+                console.log('🔄 检测到文件修改，重新应用 Title 排序');
+                this.applySort();
+            }, 3000); // 3秒防抖，用户停止编辑后才排序
+        });
+        
+        // 监听文件删除
+        this.fileDeleteHandler = this.plugin.app.vault.on('delete', () => {
+            scheduleResort('文件删除');
+        });
+        
+        // 监听文件创建
+        this.fileCreateHandler = this.plugin.app.vault.on('create', () => {
+            scheduleResort('文件创建');
+        });
+        
+        // 监听文件重命名
+        this.fileRenameHandler = this.plugin.app.vault.on('rename', () => {
+            scheduleResort('文件重命名');
+        });
+        
+        console.log('✅ 已开始监听文件变化');
+    }
+    
+    unwatchFileChanges() {
+        if (this.fileModifyHandler) {
+            this.plugin.app.vault.offref(this.fileModifyHandler);
+            this.fileModifyHandler = null;
+        }
+        if (this.fileDeleteHandler) {
+            this.plugin.app.vault.offref(this.fileDeleteHandler);
+            this.fileDeleteHandler = null;
+        }
+        if (this.fileCreateHandler) {
+            this.plugin.app.vault.offref(this.fileCreateHandler);
+            this.fileCreateHandler = null;
+        }
+        if (this.fileRenameHandler) {
+            this.plugin.app.vault.offref(this.fileRenameHandler);
+            this.fileRenameHandler = null;
+        }
+    }
+    
+    injectSortButton() {
+        if (!this.enabled) return;
+        
+        const searchLeaf = this.plugin.app.workspace.getLeavesOfType('search')[0];
+        if (!searchLeaf?.view?.containerEl) return;
+        
+        const containerEl = searchLeaf.view.containerEl;
+        
+        // 检查是否已经添加过按钮
+        if (containerEl.querySelector('.title-sort-btn') || containerEl.querySelector('.search-copy-btn')) return;
+        
+        // 尝试多种选择器查找合适的插入位置
+        let targetEl = null;
+        let insertMode = 'append'; // append, after, before
+        
+        // 方案1: 查找搜索结果信息栏 (X 项结果)
+        targetEl = containerEl.querySelector('.search-results-info');
+        
+        // 方案2: 查找排序下拉菜单按钮 (文件名 Z-A)
+        if (!targetEl) {
+            targetEl = containerEl.querySelector('.search-result-container .dropdown');
+            insertMode = 'before';
+        }
+        
+        // 方案3: 查找 nav-header 区域
+        if (!targetEl) {
+            targetEl = containerEl.querySelector('.nav-header');
+            insertMode = 'append';
+        }
+        
+        // 方案4: 查找搜索结果容器头部
+        if (!targetEl) {
+            targetEl = containerEl.querySelector('.search-result-container');
+            insertMode = 'prepend';
+        }
+        
+        if (!targetEl) {
+            console.log('❌ 未找到合适的插入位置，可用元素:', containerEl.innerHTML.substring(0, 500));
+            return;
+        }
+        
+        // 创建排序按钮（点击显示菜单）
+        this.sortButton = document.createElement('div');
+        this.sortButton.className = 'clickable-icon title-sort-btn';
+        this.sortButton.setAttribute('aria-label', '按 Title 排序');
+        this.sortButton.style.cssText = 'margin-left: 4px; display: inline-flex; align-items: center; cursor: pointer; padding: 4px;';
+        this.sortButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><text x="3" y="10" font-size="10" font-weight="bold" fill="currentColor" stroke="none">T</text><path d="M3 17l3 3 3-3"></path><path d="M6 18V14"></path></svg>`;
+        
+        this.sortButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.showSortMenu(e);
+        });
+        
+        // 创建复制按钮
+        this.copyButton = document.createElement('div');
+        this.copyButton.className = 'clickable-icon search-copy-btn';
+        this.copyButton.setAttribute('aria-label', '复制/导出搜索结果');
+        this.copyButton.style.cssText = 'margin-left: 4px; display: inline-flex; align-items: center; cursor: pointer; padding: 4px;';
+        this.copyButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+        
+        this.copyButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.showCopyMenu(e);
+        });
+        
+        // 根据模式插入按钮
+        if (insertMode === 'append') {
+            targetEl.appendChild(this.sortButton);
+            targetEl.appendChild(this.copyButton);
+        } else if (insertMode === 'before') {
+            targetEl.parentNode.insertBefore(this.sortButton, targetEl);
+            targetEl.parentNode.insertBefore(this.copyButton, targetEl);
+        } else if (insertMode === 'prepend') {
+            targetEl.insertBefore(this.copyButton, targetEl.firstChild);
+            targetEl.insertBefore(this.sortButton, targetEl.firstChild);
+        }
+        
+        this.updateButtonState();
+        
+        console.log('✅ Title 排序按钮和复制按钮已添加，插入模式:', insertMode);
+    }
+    
+    // 显示复制/导出菜单
+    async showCopyMenu(e) {
+        const searchLeaf = this.plugin.app.workspace.getLeavesOfType('search')[0];
+        const resultDomLookup = searchLeaf?.view?.dom?.resultDomLookup;
+        
+        // 直接从 resultDomLookup 获取准确的文件数量
+        const totalFiles = resultDomLookup ? resultDomLookup.size : 0;
+        
+        // 获取内容并计算字数
+        const result = totalFiles > 0 ? await this.getSearchResultsContent() : null;
+        const charCount = result ? result.content.length : 0;
+        
+        const menu = new Menu();
+        
+        if (totalFiles === 0) {
+            menu.addItem((item) => {
+                item.setTitle('📊 没有搜索结果')
+                    .setDisabled(true);
+            });
+        } else {
+            menu.addItem((item) => {
+                item.setTitle(`📊 ${totalFiles} 篇笔记，共 ${charCount.toLocaleString()} 字`)
+                    .setDisabled(true);
+            });
+        }
+        
+        menu.addSeparator();
+        
+        menu.addItem((item) => {
+            item.setTitle('复制到剪贴板')
+                .setIcon('copy')
+                .setDisabled(!result)
+                .onClick(() => {
+                    this.copySearchResultsWithData(result);
+                });
+        });
+        
+        menu.addItem((item) => {
+            item.setTitle('导出为文件')
+                .setIcon('download')
+                .setDisabled(!result)
+                .onClick(() => {
+                    this.exportSearchResultsWithData(result);
+                });
+        });
+        
+        menu.showAtMouseEvent(e);
+    }
+    
+    // 获取搜索结果内容（去除 YAML）
+    async getSearchResultsContent() {
+        const searchLeaf = this.plugin.app.workspace.getLeavesOfType('search')[0];
+        if (!searchLeaf?.view?.dom?.resultDomLookup) {
+            return null;
+        }
+        
+        const resultDomLookup = searchLeaf.view.dom.resultDomLookup;
+        if (resultDomLookup.size === 0) {
+            return null;
+        }
+        
+        // 直接从 resultDomLookup 获取所有文件（不依赖 DOM，避免虚拟滚动问题）
+        const allFiles = [];
+        for (const [file] of resultDomLookup) {
+            allFiles.push(file);
+        }
+        
+        // 如果有 Title 排序模式，按照排序模式排序
+        if (this.currentSortMode) {
+            const vault = this.plugin.app.vault;
+            const metadataCache = this.plugin.app.metadataCache;
+            
+            allFiles.sort((a, b) => {
+                const cacheA = metadataCache.getFileCache(a);
+                const cacheB = metadataCache.getFileCache(b);
+                const titleA = cacheA?.frontmatter?.title || a.basename;
+                const titleB = cacheB?.frontmatter?.title || b.basename;
+                
+                if (this.currentSortMode === 'title-asc') {
+                    return titleA.localeCompare(titleB, 'zh-CN');
+                } else {
+                    return titleB.localeCompare(titleA, 'zh-CN');
+                }
+            });
+        }
+        
+        const contents = [];
+        const vault = this.plugin.app.vault;
+        const metadataCache = this.plugin.app.metadataCache;
+        
+        for (const file of allFiles) {
+            try {
+                let content = await vault.read(file);
+                
+                // 去除 YAML frontmatter
+                content = this.removeYamlFrontmatter(content);
+                
+                // 使用 title 属性作为标题，如果没有则使用文件名
+                const cache = metadataCache.getFileCache(file);
+                const title = cache?.frontmatter?.title || file.basename;
+                
+                contents.push(`# ${title}\n\n${content.trim()}`);
+            } catch (err) {
+                console.error(`读取文件失败: ${file.path}`, err);
+            }
+        }
+        
+        if (contents.length === 0) {
+            return null;
+        }
+        
+        return {
+            content: contents.join('\n\n---\n\n'),
+            count: contents.length
+        };
+    }
+    
+    // 复制搜索结果内容（使用已获取的数据）
+    async copySearchResultsWithData(result) {
+        if (!result) {
+            new Notice('没有搜索结果');
+            return;
+        }
+        
+        await navigator.clipboard.writeText(result.content);
+        new Notice(`已复制 ${result.count} 篇笔记，共 ${result.content.length.toLocaleString()} 字`);
+    }
+    
+    // 复制搜索结果内容（去除 YAML）
+    async copySearchResults() {
+        const result = await this.getSearchResultsContent();
+        await this.copySearchResultsWithData(result);
+    }
+    
+    // 导出搜索结果到文件（使用已获取的数据）
+    async exportSearchResultsWithData(result) {
+        if (!result) {
+            new Notice('没有搜索结果');
+            return;
+        }
+        
+        const fs = require('fs');
+        const path = require('path');
+        
+        // 生成文件名
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const fileName = `搜索结果导出_${timestamp}.md`;
+        
+        // 获取系统搜索导出路径
+        let exportPath = this.plugin.settings.searchExportPath || '';
+        
+        // 判断是否为绝对路径
+        const isAbsolutePath = exportPath.startsWith('/') || /^[A-Za-z]:/.test(exportPath);
+        
+        if (isAbsolutePath) {
+            // 绝对路径：使用 fs 模块写入
+            try {
+                // 确保目录存在
+                if (!fs.existsSync(exportPath)) {
+                    fs.mkdirSync(exportPath, { recursive: true });
+                }
+                
+                const filePath = path.join(exportPath, fileName);
+                fs.writeFileSync(filePath, result.content, 'utf8');
+                new Notice(`已导出 ${result.count} 篇笔记到 ${filePath}`);
+            } catch (err) {
+                console.error('导出失败:', err);
+                new Notice('导出失败: ' + err.message);
+            }
+        } else {
+            // 相对路径：使用 Vault API 写入
+            if (exportPath) {
+                const folderExists = this.plugin.app.vault.getAbstractFileByPath(exportPath);
+                if (!folderExists) {
+                    try {
+                        await this.plugin.app.vault.createFolder(exportPath);
+                    } catch (e) {
+                        // 目录可能已存在，忽略错误
+                    }
+                }
+                if (!exportPath.endsWith('/')) {
+                    exportPath += '/';
+                }
+            }
+            
+            const filePath = exportPath + fileName;
+            
+            try {
+                await this.plugin.app.vault.create(filePath, result.content);
+                new Notice(`已导出 ${result.count} 篇笔记，共 ${result.content.length.toLocaleString()} 字`);
+                
+                // 打开导出的文件
+                const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+                if (file) {
+                    await this.plugin.app.workspace.getLeaf().openFile(file);
+                }
+            } catch (err) {
+                console.error('导出失败:', err);
+                new Notice('导出失败: ' + err.message);
+            }
+        }
+    }
+    
+    // 导出搜索结果到文件
+    async exportSearchResults() {
+        const result = await this.getSearchResultsContent();
+        await this.exportSearchResultsWithData(result);
+    }
+    
+    // 去除 YAML frontmatter
+    removeYamlFrontmatter(content) {
+        // 匹配开头的 YAML 区域 (--- 开始，--- 结束)
+        const yamlRegex = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
+        return content.replace(yamlRegex, '').trim();
+    }
+    
+    // 显示排序选项菜单
+    showSortMenu(e) {
+        const menu = new Menu();
+        
+        menu.addItem((item) => {
+            item.setTitle('Title 升序 (A-Z)')
+                .setIcon(this.currentSortMode === 'title-asc' ? 'checkmark' : '')
+                .onClick(() => {
+                    this.setSortMode('title-asc');
+                });
+        });
+        
+        menu.addItem((item) => {
+            item.setTitle('Title 降序 (Z-A)')
+                .setIcon(this.currentSortMode === 'title-desc' ? 'checkmark' : '')
+                .onClick(() => {
+                    this.setSortMode('title-desc');
+                });
+        });
+        
+        menu.addSeparator();
+        
+        menu.addItem((item) => {
+            item.setTitle('关闭 Title 排序')
+                .setIcon(this.currentSortMode === null ? 'checkmark' : '')
+                .onClick(() => {
+                    this.setSortMode(null);
+                });
+        });
+        
+        menu.showAtMouseEvent(e);
+    }
+    
+    // 设置排序模式
+    setSortMode(mode) {
+        this.currentSortMode = mode;
+        
+        // 保存排序状态
+        this.plugin.settings.searchSortMode = this.currentSortMode;
+        this.plugin.saveSettings();
+        
+        this.updateButtonState();
+        
+        if (this.currentSortMode) {
+            new Notice(`按 Title ${mode === 'title-asc' ? '升序' : '降序'}排序`);
+            this.applySort();
+        } else {
+            new Notice('已关闭 Title 排序');
+        }
+    }
+    
+    removeSortButton() {
+        if (this.sortButton) {
+            this.sortButton.remove();
+            this.sortButton = null;
+        }
+        if (this.copyButton) {
+            this.copyButton.remove();
+            this.copyButton = null;
+        }
+        // 也清理可能残留的按钮
+        document.querySelectorAll('.title-sort-btn').forEach(btn => btn.remove());
+        document.querySelectorAll('.search-copy-btn').forEach(btn => btn.remove());
+    }
+    
+    toggleSort() {
+        if (this.currentSortMode === null) {
+            this.currentSortMode = 'title-asc';
+            new Notice('按 Title 升序排序 (A-Z)');
+        } else if (this.currentSortMode === 'title-asc') {
+            this.currentSortMode = 'title-desc';
+            new Notice('按 Title 降序排序 (Z-A)');
+        } else {
+            this.currentSortMode = null;
+            new Notice('已取消 Title 排序');
+        }
+        
+        // 保存排序状态
+        this.plugin.settings.searchSortMode = this.currentSortMode;
+        this.plugin.saveSettings();
+        
+        this.updateButtonState();
+        
+        if (this.currentSortMode) {
+            this.applySort();
+        }
+    }
+    
+    updateButtonState() {
+        if (!this.sortButton) return;
+        
+        if (this.currentSortMode) {
+            this.sortButton.style.color = 'var(--interactive-accent)';
+            const label = this.currentSortMode === 'title-asc' ? 'Title (A-Z)' : 'Title (Z-A)';
+            this.sortButton.setAttribute('aria-label', `按 ${label} 排序中，点击切换`);
+        } else {
+            this.sortButton.style.color = '';
+            this.sortButton.setAttribute('aria-label', '按 Title 排序');
+        }
+    }
+    
+    applySort() {
+        if (!this.currentSortMode || this.isSorting) return;
+        
+        this.isSorting = true; // 设置标记防止循环
+        
+        const searchLeaf = this.plugin.app.workspace.getLeavesOfType('search')[0];
+        if (!searchLeaf) {
+            this.isSorting = false;
+            return;
+        }
+        
+        const searchView = searchLeaf.view;
+        if (!searchView || !searchView.dom) {
+            this.isSorting = false;
+            return;
+        }
+        
+        const dom = searchView.dom;
+        if (!dom.resultDomLookup || dom.resultDomLookup.size === 0) {
+            console.log('❌ 没有搜索结果可排序');
+            this.isSorting = false;
+            return;
+        }
+        
+        // 获取所有结果并排序
+        const results = Array.from(dom.resultDomLookup.entries());
+        console.log(`📊 正在对 ${results.length} 个结果按 Title 排序，模式: ${this.currentSortMode}`);
+        
+        // 按 title 排序
+        results.sort((a, b) => {
+            const titleA = this.getFileTitle(a[0]);
+            const titleB = this.getFileTitle(b[0]);
+            const compare = titleA.localeCompare(titleB, 'zh-CN', { numeric: true });
+            return this.currentSortMode === 'title-asc' ? compare : -compare;
+        });
+        
+        // 重新排列 DOM 元素
+        let container = dom.childrenEl;
+        if (!container) {
+            container = dom.el?.querySelector('.search-results-children');
+        }
+        if (!container) {
+            container = searchView.containerEl.querySelector('.search-results-children');
+        }
+        
+        if (!container) {
+            console.log('❌ 未找到搜索结果容器');
+            this.isSorting = false;
+            return;
+        }
+        
+        results.forEach(([file, item]) => {
+            if (item.el && container.contains(item.el)) {
+                container.appendChild(item.el);
+            } else if (item.containerEl && container.contains(item.containerEl)) {
+                container.appendChild(item.containerEl);
+            }
+        });
+        
+        console.log('✅ Title 排序完成');
+        
+        // 延迟重置标记，防止立即触发的事件再次排序
+        setTimeout(() => {
+            this.isSorting = false;
+        }, 500);
+    }
+    
+    getFileTitle(file) {
+        const cache = this.plugin.app.metadataCache.getFileCache(file);
+        let title = cache?.frontmatter?.title || file.basename;
+        if (title != null && typeof title !== 'string') {
+            title = String(title);
+        }
+        return title;
+    }
 }
 
 // 主插件类
+const DEFAULT_SETTINGS = {
+    exportPath: '',  // 标签搜索导出目录路径（绝对路径，用于点击标签搜索结果导出）
+    searchExportPath: '',  // 系统搜索导出路径（相对路径，用于原生搜索结果导出）
+    enableSearchTitleReplace: true,  // 是否在系统搜索中显示 title 属性
+    enableSearchTitleSort: true,  // 是否启用按 title 排序功能
+    searchSortMode: null,  // 搜索排序模式: null, 'title-asc', 'title-desc'
+    tagExportPaths: {}  // 标签-导出路径映射，格式: { "标签名": "导出路径", ... }
+};
+
 module.exports = class TagClickSearchPlugin extends Plugin {
     async onload() {
         console.log('✅ Tag Click Search: 插件开始加载');
+
+        // 加载设置
+        await this.loadSettings();
 
         try {
             // 注册自定义视图
@@ -1349,6 +2394,39 @@ module.exports = class TagClickSearchPlugin extends Plugin {
                         }
                     } else {
                         console.warn('⚠️ Tag Click Search: 未找到活动编辑器');
+                    }
+                }
+            });
+
+            // 添加命令：搜索选中文本（使用系统搜索）
+            this.addCommand({
+                id: 'search-selected-text',
+                name: '搜索选中文本',
+                editorCallback: async (editor, view) => {
+                    const selectedText = editor.getSelection().trim();
+                    if (!selectedText) {
+                        new Notice('请先选中要搜索的文本');
+                        return;
+                    }
+                    console.log('🔍 Tag Click Search: 搜索选中文本:', selectedText);
+                    
+                    // 使用系统搜索
+                    const searchLeaf = this.app.workspace.getLeavesOfType('search')[0];
+                    if (searchLeaf) {
+                        this.app.workspace.revealLeaf(searchLeaf);
+                        const searchView = searchLeaf.view;
+                        if (searchView && searchView.setQuery) {
+                            searchView.setQuery(selectedText);
+                        }
+                    } else {
+                        // 如果搜索面板不存在，通过命令打开
+                        await this.app.commands.executeCommandById('global-search:open');
+                        setTimeout(() => {
+                            const newSearchLeaf = this.app.workspace.getLeavesOfType('search')[0];
+                            if (newSearchLeaf?.view?.setQuery) {
+                                newSearchLeaf.view.setQuery(selectedText);
+                            }
+                        }, 100);
                     }
                 }
             });
@@ -1390,6 +2468,14 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             });
             console.log('✅ Tag Click Search: 命令已添加');
 
+            // 注册设置面板
+            this.addSettingTab(new TagClickSearchSettingTab(this.app, this));
+            console.log('✅ Tag Click Search: 设置面板已注册');
+
+            // 初始化系统搜索增强功能
+            this.initSearchEnhancements();
+            console.log('✅ Tag Click Search: 系统搜索增强功能已初始化');
+
             console.log('✅✅✅ Tag Click Search: 插件加载完成！');
             
             // 显示提示
@@ -1403,6 +2489,109 @@ module.exports = class TagClickSearchPlugin extends Plugin {
 
     onunload() {
         console.log('Tag Click Search: 插件卸载');
+        
+        // 清理系统搜索增强功能
+        this.cleanupSearchEnhancements();
+    }
+
+    // 初始化系统搜索增强功能
+    initSearchEnhancements() {
+        this.searchDomWrapper = null;
+        this.searchSortEnhancer = null;
+        this.searchLayoutHandler = null;
+        this.metadataCacheHandler = null;
+        
+        // 创建标题解析器
+        const titleResolver = (filePath) => {
+            const file = this.app.vault.getAbstractFileByPath(filePath);
+            if (!file || file.extension !== 'md') return null;
+            
+            const cache = this.app.metadataCache.getFileCache(file);
+            let title = cache?.frontmatter?.title;
+            if (title != null && typeof title !== 'string') {
+                title = String(title);
+            }
+            return title || file.basename;
+        };
+        
+        // 启用系统搜索标题替换
+        const enableSearchTitleReplace = () => {
+            if (!this.settings.enableSearchTitleReplace) return;
+            
+            const searchLeaves = this.app.workspace.getLeavesOfType('search');
+            if (searchLeaves.length === 0) return;
+            
+            const searchView = searchLeaves[0].view;
+            if (!searchView || !searchView.dom) return;
+            
+            // 如果已经有包装器，先刷新
+            if (this.searchDomWrapper) {
+                this.searchDomWrapper.refresh();
+                return;
+            }
+            
+            this.searchDomWrapper = new SearchDomWrapper(this, searchView.dom, titleResolver);
+            console.log('✅ 系统搜索标题替换已启用');
+        };
+        
+        // 启用系统搜索排序功能
+        const enableSearchSort = () => {
+            if (!this.settings.enableSearchTitleSort) return;
+            
+            if (!this.searchSortEnhancer) {
+                this.searchSortEnhancer = new SearchSortEnhancer(this);
+            }
+            this.searchSortEnhancer.enable();
+            console.log('✅ 系统搜索排序功能已启用');
+        };
+        
+        // 监听布局变化，在搜索视图激活时启用功能
+        this.searchLayoutHandler = this.app.workspace.on('layout-change', () => {
+            const searchLeaves = this.app.workspace.getLeavesOfType('search');
+            if (searchLeaves.length > 0 && searchLeaves[0].view) {
+                enableSearchTitleReplace();
+                enableSearchSort();
+            }
+        });
+        
+        // 监听元数据变化，刷新搜索结果标题
+        this.metadataCacheHandler = this.app.metadataCache.on('changed', (file) => {
+            if (this.searchDomWrapper && this.settings.enableSearchTitleReplace) {
+                // 延迟刷新，确保元数据已更新
+                setTimeout(() => {
+                    this.searchDomWrapper.refresh();
+                }, 100);
+            }
+        });
+        
+        // 如果搜索视图已经打开，立即启用
+        setTimeout(() => {
+            enableSearchTitleReplace();
+            enableSearchSort();
+        }, 1000);
+    }
+    
+    // 清理系统搜索增强功能
+    cleanupSearchEnhancements() {
+        if (this.searchDomWrapper) {
+            this.searchDomWrapper.disable();
+            this.searchDomWrapper = null;
+        }
+        
+        if (this.searchSortEnhancer) {
+            this.searchSortEnhancer.disable();
+            this.searchSortEnhancer = null;
+        }
+        
+        if (this.searchLayoutHandler) {
+            this.app.workspace.offref(this.searchLayoutHandler);
+            this.searchLayoutHandler = null;
+        }
+        
+        if (this.metadataCacheHandler) {
+            this.app.metadataCache.offref(this.metadataCacheHandler);
+            this.metadataCacheHandler = null;
+        }
     }
 
     // 注册标签点击事件处理器
@@ -1537,12 +2726,14 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         try {
             const trimmedQuery = query.trim();
             
-            // 检查是否包含多个标签或排除标签的复杂搜索
-            // 匹配模式：#标签1 #标签2 或 #标签1 -#标签2 或 #标签1 #标签2 关键词
+            // 检查是否包含多个标签、排除标签、或排除关键词的复杂搜索
+            // 匹配模式：#标签1 #标签2 或 #标签1 -#标签2 或 #标签1 关键词 -排除词
             const hasMultipleTags = (trimmedQuery.match(/#/g) || []).length > 1;
+            // 检查是否有排除关键词（空格后跟 - 开头的词，但不是 -#）
+            const hasExcludeKeyword = /\s+-(?!#)\S+/.test(trimmedQuery);
             
-            if (hasMultipleTags) {
-                // 复杂标签搜索
+            if (hasMultipleTags || hasExcludeKeyword) {
+                // 复杂标签搜索（支持排除关键词）
                 await this.searchByComplexTags(trimmedQuery, dateFilter);
                 return;
             }
@@ -1579,15 +2770,16 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         }
     }
 
-    // 复杂标签搜索（支持多标签AND、排除标签、组合标题搜索）
+    // 复杂标签搜索（支持多标签AND、排除标签、组合标题搜索、排除标题关键词）
     async searchByComplexTags(query, dateFilter = null) {
         console.log(`🔍 Complex tag search: ${query}`);
 
-        // 解析查询：提取包含标签、排除标签、标题关键词
+        // 解析查询：提取包含标签、排除标签、标题关键词、排除标题关键词
         const parts = query.split(/\s+/);
         const includeTags = [];
         const excludeTags = [];
-        const titleKeywords = [];
+        const includeKeywords = [];  // 标题必须包含的关键词
+        const excludeKeywords = [];  // 标题必须排除的关键词
 
         for (const part of parts) {
             if (part.startsWith('-#')) {
@@ -1598,15 +2790,20 @@ module.exports = class TagClickSearchPlugin extends Plugin {
                 // 包含标签
                 const tag = part.substring(1).toLowerCase().replace(/\s+/g, '');
                 if (tag) includeTags.push(tag);
+            } else if (part.startsWith('-') && part.length > 1) {
+                // 排除标题关键词（以 - 开头但不是 -#）
+                const keyword = part.substring(1).trim();
+                if (keyword) excludeKeywords.push(keyword);
             } else if (part.trim()) {
-                // 标题关键词
-                titleKeywords.push(part.trim());
+                // 包含标题关键词
+                includeKeywords.push(part.trim());
             }
         }
 
         console.log(`📝 Include tags: [${includeTags.join(', ')}]`);
         console.log(`📝 Exclude tags: [${excludeTags.join(', ')}]`);
-        console.log(`📝 Title keywords: [${titleKeywords.join(', ')}]`);
+        console.log(`📝 Include keywords: [${includeKeywords.join(', ')}]`);
+        console.log(`📝 Exclude keywords: [${excludeKeywords.join(', ')}]`);
 
         if (includeTags.length === 0) {
             new Notice('请至少指定一个要搜索的标签');
@@ -1653,29 +2850,33 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             const hasAnyExcludeTag = excludeTags.some(tag => fileTags.has(tag));
             if (hasAnyExcludeTag) continue;
 
-            // 如果有标题关键词，检查标题
-            if (titleKeywords.length > 0) {
-                let title = cache.frontmatter?.title || file.basename;
-                if (title != null && typeof title !== 'string') {
-                    title = String(title);
-                }
-                
-                if (!title) continue;
-                
-                const titleLower = title.toLowerCase();
-                const allKeywordsMatch = titleKeywords.every(kw => 
-                    titleLower.includes(kw.toLowerCase())
-                );
-                
-                if (!allKeywordsMatch) continue;
-            }
-
-            // 通过所有条件，添加到结果
+            // 获取标题
             let title = cache.frontmatter?.title || file.basename;
             if (title != null && typeof title !== 'string') {
                 title = String(title);
             }
             
+            if (!title) continue;
+            
+            const titleLower = title.toLowerCase();
+
+            // 检查标题必须包含的关键词
+            if (includeKeywords.length > 0) {
+                const allIncludeMatch = includeKeywords.every(kw => 
+                    titleLower.includes(kw.toLowerCase())
+                );
+                if (!allIncludeMatch) continue;
+            }
+
+            // 检查标题必须排除的关键词
+            if (excludeKeywords.length > 0) {
+                const hasAnyExcludeKeyword = excludeKeywords.some(kw => 
+                    titleLower.includes(kw.toLowerCase())
+                );
+                if (hasAnyExcludeKeyword) continue;
+            }
+
+            // 通过所有条件，添加到结果
             matchedFiles.push({
                 file: file,
                 title: title || file.basename,
@@ -2011,6 +3212,7 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             view.plugin = this;
             view.searchType = searchType;
             view.dateFilter = dateFilter; // 设置日期过滤
+            view.selectedFiles.clear(); // 清空之前的选中状态
             await view.onOpen();
         }
 
@@ -2740,6 +3942,30 @@ module.exports = class TagClickSearchPlugin extends Plugin {
                 cursor: pointer;
                 opacity: 0.8;
             }
+
+            /* 导出按钮样式 */
+            .tag-search-export-button:not(:disabled) {
+                background-color: #3b82f6;
+                color: white;
+                border-color: #3b82f6;
+            }
+
+            .tag-search-export-button:not(:disabled):hover {
+                background-color: #2563eb;
+            }
+
+            /* 系统搜索排序按钮样式 */
+            .title-sort-button {
+                margin-left: 4px;
+            }
+
+            .title-sort-button.is-active {
+                color: var(--interactive-accent);
+            }
+
+            .title-sort-button.is-active svg {
+                stroke: var(--interactive-accent);
+            }
         `;
         document.head.appendChild(style);
 
@@ -2751,4 +3977,228 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             }
         });
     }
+
+    // 加载设置
+    async loadSettings() {
+        const savedData = await this.loadData();
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, savedData);
+        
+        // 迁移旧配置：将 vitepressPath 迁移到 exportPath
+        if (savedData?.vitepressPath && !savedData?.exportPath) {
+            this.settings.exportPath = savedData.vitepressPath;
+            delete this.settings.vitepressPath;
+            await this.saveSettings();
+            console.log('✅ 已将 vitepressPath 迁移到 exportPath');
+        }
+    }
+
+    // 保存设置
+    async saveSettings() {
+        await this.saveData(this.settings);
+    }
 };
+
+// 设置面板类
+class TagClickSearchSettingTab extends PluginSettingTab {
+    constructor(app, plugin) {
+        super(app, plugin);
+        this.plugin = plugin;
+    }
+
+    display() {
+        const { containerEl } = this;
+        containerEl.empty();
+
+        containerEl.createEl('h2', { text: 'Tag Click Search 设置' });
+
+        // 系统搜索增强设置
+        containerEl.createEl('h3', { text: '🔍 系统搜索增强' });
+
+        new Setting(containerEl)
+            .setName('在系统搜索中显示 Title 属性')
+            .setDesc('启用后，Obsidian 系统搜索结果将显示笔记的 frontmatter title 属性，而非文件名')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enableSearchTitleReplace)
+                .onChange(async (value) => {
+                    this.plugin.settings.enableSearchTitleReplace = value;
+                    await this.plugin.saveSettings();
+                    // 重新初始化搜索增强功能
+                    this.plugin.cleanupSearchEnhancements();
+                    this.plugin.initSearchEnhancements();
+                    new Notice(value ? '系统搜索标题替换已启用' : '系统搜索标题替换已禁用');
+                }));
+
+        new Setting(containerEl)
+            .setName('启用按 Title 排序')
+            .setDesc('在系统搜索结果中添加按 Title 属性排序的按钮')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enableSearchTitleSort)
+                .onChange(async (value) => {
+                    this.plugin.settings.enableSearchTitleSort = value;
+                    await this.plugin.saveSettings();
+                    // 重新初始化搜索增强功能
+                    this.plugin.cleanupSearchEnhancements();
+                    this.plugin.initSearchEnhancements();
+                    new Notice(value ? '系统搜索排序功能已启用' : '系统搜索排序功能已禁用');
+                }));
+
+        // 文件导出设置
+        containerEl.createEl('h3', { text: '📤 文件导出' });
+
+        new Setting(containerEl)
+            .setName('标签搜索导出目录')
+            .setDesc('点击标签搜索结果的导出目录（绝对路径，如 /Users/xxx/docs）')
+            .addText(text => text
+                .setPlaceholder('/path/to/export/folder')
+                .setValue(this.plugin.settings.exportPath)
+                .onChange(async (value) => {
+                    this.plugin.settings.exportPath = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('系统搜索导出目录')
+            .setDesc('原生搜索结果的导出目录（相对于 Vault 的路径，如 exports 或留空表示 Vault 根目录）')
+            .addText(text => text
+                .setPlaceholder('exports')
+                .setValue(this.plugin.settings.searchExportPath)
+                .onChange(async (value) => {
+                    this.plugin.settings.searchExportPath = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        // 标签-导出路径映射设置
+        containerEl.createEl('h3', { text: '🏷️ 标签导出路径映射' });
+        
+        const tagExportDesc = containerEl.createEl('p', { 
+            cls: 'setting-item-description',
+            text: '为不同的标签配置专用的导出目录。搜索特定标签时，导出将使用对应的目录。'
+        });
+
+        // 显示现有的标签-路径映射
+        const tagExportPaths = this.plugin.settings.tagExportPaths || {};
+        const tagMappingContainer = containerEl.createEl('div', { cls: 'tag-export-mapping-container' });
+        
+        // 渲染标签映射列表的函数
+        const renderTagMappings = () => {
+            tagMappingContainer.empty();
+            
+            const entries = Object.entries(this.plugin.settings.tagExportPaths || {});
+            
+            if (entries.length === 0) {
+                tagMappingContainer.createEl('p', { 
+                    text: '暂无标签映射配置，点击下方按钮添加。',
+                    cls: 'setting-item-description'
+                });
+            } else {
+                for (const [tag, path] of entries) {
+                    const mappingItem = tagMappingContainer.createEl('div', { 
+                        cls: 'tag-export-mapping-item setting-item'
+                    });
+                    mappingItem.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--background-modifier-border);';
+                    
+                    // 标签名显示
+                    const tagSpan = mappingItem.createEl('span', { 
+                        text: `#${tag}`,
+                        cls: 'tag-export-tag-name'
+                    });
+                    tagSpan.style.cssText = 'min-width: 120px; font-weight: 500; color: var(--text-accent);';
+                    
+                    // 箭头
+                    mappingItem.createEl('span', { text: '→' });
+                    
+                    // 路径显示
+                    const pathSpan = mappingItem.createEl('span', { 
+                        text: path,
+                        cls: 'tag-export-path'
+                    });
+                    pathSpan.style.cssText = 'flex: 1; color: var(--text-muted); font-size: 0.9em; overflow: hidden; text-overflow: ellipsis;';
+                    
+                    // 删除按钮
+                    const deleteBtn = mappingItem.createEl('button', { 
+                        text: '删除',
+                        cls: 'mod-warning'
+                    });
+                    deleteBtn.style.cssText = 'padding: 4px 8px; font-size: 0.85em;';
+                    deleteBtn.addEventListener('click', async () => {
+                        delete this.plugin.settings.tagExportPaths[tag];
+                        await this.plugin.saveSettings();
+                        renderTagMappings();
+                        new Notice(`已删除标签 #${tag} 的导出路径映射`);
+                    });
+                }
+            }
+        };
+        
+        renderTagMappings();
+
+        // 添加新映射的表单
+        const addMappingDiv = containerEl.createEl('div', { cls: 'tag-export-add-mapping' });
+        addMappingDiv.style.cssText = 'margin-top: 12px; padding: 12px; background: var(--background-secondary); border-radius: 8px;';
+        
+        addMappingDiv.createEl('h4', { text: '添加新的标签映射', cls: 'setting-item-name' });
+        
+        const inputRow = addMappingDiv.createEl('div');
+        inputRow.style.cssText = 'display: flex; gap: 8px; align-items: center; margin-top: 8px;';
+        
+        const tagInput = inputRow.createEl('input', {
+            type: 'text',
+            placeholder: '标签名（如：庆余年）'
+        });
+        tagInput.style.cssText = 'width: 150px; padding: 6px 10px;';
+        
+        const pathInput = inputRow.createEl('input', {
+            type: 'text',
+            placeholder: '导出路径（绝对路径）'
+        });
+        pathInput.style.cssText = 'flex: 1; padding: 6px 10px;';
+        
+        const addBtn = inputRow.createEl('button', { text: '添加' });
+        addBtn.style.cssText = 'padding: 6px 16px;';
+        
+        addBtn.addEventListener('click', async () => {
+            const tag = tagInput.value.trim().replace(/^#/, '');
+            const path = pathInput.value.trim();
+            
+            if (!tag) {
+                new Notice('请输入标签名');
+                return;
+            }
+            if (!path) {
+                new Notice('请输入导出路径');
+                return;
+            }
+            
+            if (!this.plugin.settings.tagExportPaths) {
+                this.plugin.settings.tagExportPaths = {};
+            }
+            
+            this.plugin.settings.tagExportPaths[tag] = path;
+            await this.plugin.saveSettings();
+            
+            tagInput.value = '';
+            pathInput.value = '';
+            renderTagMappings();
+            new Notice(`已添加标签 #${tag} 的导出路径映射`);
+        });
+
+        // 使用说明
+        containerEl.createEl('h3', { text: '📖 使用说明' });
+        
+        const searchHelpDiv = containerEl.createEl('div', { cls: 'setting-item-description' });
+        searchHelpDiv.innerHTML = `
+            <h4>系统搜索增强功能</h4>
+            <p>1. <strong>显示 Title 属性</strong>：在 Obsidian 系统搜索（Ctrl/Cmd + Shift + F）结果中，显示笔记的 frontmatter title 属性，而不是文件名</p>
+            <p>2. <strong>按 Title 排序</strong>：在搜索结果头部添加排序按钮，支持按 Title 属性升序/降序排列</p>
+            <p>3. 如果笔记没有 title 属性，则显示文件名</p>
+            <br>
+            <h4>文件导出功能</h4>
+            <p>1. 在搜索结果中选择要导出的笔记</p>
+            <p>2. 点击"导出文件"按钮</p>
+            <p>3. 笔记会自动转换为标准 Markdown 并导出到指定目录</p>
+            <p>4. 如果文件已存在会自动覆盖</p>
+            <br>
+            <p><strong>默认路径：</strong>如果未设置，将使用 PKM 同级目录下的 docs/docs 文件夹</p>
+        `;
+    }
+}

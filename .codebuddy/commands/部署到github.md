@@ -1,0 +1,1 @@
+将当前的obsidian插件部署到github
