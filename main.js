@@ -128,25 +128,33 @@ class TagSearchResultsView extends ItemView {
 
         // 显示标签建议
         const showSuggestions = (query) => {
-            // 只有输入包含 # 号时才显示标签建议
-            if (!query.includes('#')) {
-                suggestionsContainer.empty();
-                suggestionsContainer.style.display = 'none';
-                return;
-            }
-
-            const cleanQuery = query.replace(/^#+/, '').toLowerCase().trim();
+            // 找到最后一个 # 的位置
+            const lastHashIndex = query.lastIndexOf('#');
             
-            if (!cleanQuery) {
+            // 如果没有 # 或者 # 后面有空格，不显示建议
+            if (lastHashIndex === -1) {
+                suggestionsContainer.empty();
+                suggestionsContainer.style.display = 'none';
+                return;
+            }
+            
+            // 获取最后一个 # 后面的内容
+            const afterHash = query.substring(lastHashIndex + 1);
+            
+            // 如果 # 后面有空格，说明标签已输入完成，不显示建议
+            if (afterHash.includes(' ')) {
                 suggestionsContainer.empty();
                 suggestionsContainer.style.display = 'none';
                 return;
             }
 
+            const cleanQuery = afterHash.toLowerCase().trim();
+            
+            // 如果 # 后面没有内容，显示所有标签
             const allTags = getAllTags();
-            const matchedTags = allTags.filter(tag => 
-                tag.toLowerCase().includes(cleanQuery)
-            ).slice(0, 10); // 最多显示10个建议
+            const matchedTags = cleanQuery 
+                ? allTags.filter(tag => tag.toLowerCase().includes(cleanQuery)).slice(0, 10)
+                : allTags.slice(0, 10);
 
             if (matchedTags.length === 0) {
                 suggestionsContainer.empty();
@@ -173,9 +181,11 @@ class TagSearchResultsView extends ItemView {
                 });
 
                 item.addEventListener('click', () => {
-                    input.value = `#${tag}`;
+                    // 替换最后一个 # 及其后面的内容为选中的标签
+                    const beforeHash = query.substring(0, lastHashIndex);
+                    input.value = `${beforeHash}#${tag}`;
                     suggestionsContainer.style.display = 'none';
-                    this.plugin.searchAndDisplay(`#${tag}`);
+                    this.plugin.searchAndDisplay(input.value);
                 });
 
                 item.addEventListener('mouseenter', () => {
@@ -690,6 +700,13 @@ class TagSearchResultsView extends ItemView {
                 if (shouldAdd) {
                     console.log(`✅ New file matches search criteria, adding to results`);
                     
+                    // 检查是否已存在（防止重复添加）
+                    const alreadyExists = this.allFiles.some(item => item.file.path === file.path);
+                    if (alreadyExists) {
+                        console.log(`ℹ️ File already exists in results, skipping: ${file.path}`);
+                        return;
+                    }
+                    
                     let title = cache.frontmatter?.title || file.basename;
                     if (title != null && typeof title !== 'string') {
                         title = String(title);
@@ -712,22 +729,6 @@ class TagSearchResultsView extends ItemView {
             }, 500); // 延迟 500ms 等待缓存更新
         });
         console.log(`✅ File create handler registered`);
-
-        // 移动端底部添加返回按钮
-        if (this.plugin.app.isMobile) {
-            const footerBar = container.createEl('div', { cls: 'tag-search-mobile-footer' });
-            
-            const closeButton = footerBar.createEl('button', {
-                cls: 'tag-search-close-button',
-                attr: { 'aria-label': '关闭搜索' }
-            });
-            closeButton.innerHTML = '← 返回';
-            
-            closeButton.addEventListener('click', () => {
-                // 关闭当前视图
-                this.leaf.detach();
-            });
-        }
     }
 
     // 渲染头部和列表（提取为方法以便复用）
@@ -796,6 +797,38 @@ class TagSearchResultsView extends ItemView {
         // 文件列表
         const list = container.createEl('div', { 
             cls: 'tag-search-list nav-files-container'
+        });
+
+        // 底部当前笔记操作按钮区域
+        const bottomActions = container.createEl('div', { cls: 'tag-search-bottom-actions' });
+        
+        // 复制当前笔记路径按钮
+        const copyPathBtn = bottomActions.createEl('button', {
+            text: '📋 复制当前笔记路径',
+            cls: 'tag-search-action-button tag-search-copy-path-button',
+            attr: { 'aria-label': '复制当前笔记的绝对路径', 'title': '复制当前笔记的绝对路径' }
+        });
+        
+        copyPathBtn.addEventListener('click', async () => {
+            const activeFile = this.plugin.app.workspace.getActiveFile();
+            if (!activeFile) {
+                new Notice('没有打开的笔记');
+                return;
+            }
+            const absolutePath = this.plugin.getAbsolutePath(activeFile.path);
+            await navigator.clipboard.writeText(absolutePath);
+            new Notice(`已复制路径: ${absolutePath}`);
+        });
+
+        // 导出当前笔记按钮
+        const exportCurrentBtn = bottomActions.createEl('button', {
+            text: '📤 导出当前笔记',
+            cls: 'tag-search-action-button tag-search-export-current-button',
+            attr: { 'aria-label': '根据当前笔记标签导出', 'title': '根据当前笔记标签导出' }
+        });
+        
+        exportCurrentBtn.addEventListener('click', async () => {
+            await this.plugin.exportCurrentNoteByTags();
         });
 
         if (this.files.length === 0) {
@@ -1055,6 +1088,25 @@ class TagSearchResultsView extends ItemView {
             // 悬停显示路径
             fileContent.setAttribute('data-path', item.file.path);
             fileContent.setAttribute('title', item.file.path);
+        }
+
+        // 移动端底部添加返回按钮（放在最后确保在底部）
+        if (this.plugin.app.isMobile) {
+            const footerBar = container.createEl('div', { cls: 'tag-search-mobile-footer' });
+            
+            const closeButton = footerBar.createEl('button', {
+                cls: 'tag-search-close-button',
+                attr: { 'aria-label': '关闭搜索' }
+            });
+            closeButton.innerHTML = '← 返回';
+            
+            closeButton.addEventListener('click', () => {
+                // 收起右侧面板而不是 detach，保持视图在下拉菜单中
+                const rightSplit = this.plugin.app.workspace.rightSplit;
+                if (rightSplit) {
+                    rightSplit.collapse();
+                }
+            });
         }
     }
 
@@ -1393,11 +1445,15 @@ class TagSearchResultsView extends ItemView {
             return titleA.localeCompare(titleB, 'zh-CN', { numeric: true });
         });
         
-        // 找到列表容器并重新渲染
+        // 找到并删除旧元素
         const oldHeader = container.querySelector('.tag-search-header');
+        const oldBottomActions = container.querySelector('.tag-search-bottom-actions');
+        const oldMobileFooter = container.querySelector('.tag-search-mobile-footer');
         
         if (oldList) oldList.remove();
         if (oldHeader) oldHeader.remove();
+        if (oldBottomActions) oldBottomActions.remove();
+        if (oldMobileFooter) oldMobileFooter.remove();
         
         // 重新渲染头部和列表
         this.renderHeaderAndList(container);
@@ -2368,6 +2424,13 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             );
             console.log('✅ Tag Click Search: 视图已注册');
 
+            // 当工作区准备好后，激活右侧面板视图
+            if (this.app.workspace.layoutReady) {
+                this.initLeaf();
+            } else {
+                this.app.workspace.onLayoutReady(() => this.initLeaf());
+            }
+
             // 注册标签点击事件处理器
             this.registerTagClickHandler();
             console.log('✅ Tag Click Search: 事件处理器已注册');
@@ -2375,6 +2438,15 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             // 添加样式
             this.addStyles();
             console.log('✅ Tag Click Search: 样式已添加');
+
+            // 添加侧边栏图标（Ribbon Icon）
+            // 使用 hash 图标代表标签搜索，保存引用以便清理
+            this.ribbonIconEl = this.addRibbonIcon('hash', 'Tag Click Search - 标签搜索', async () => {
+                await this.focusSearchPanel();
+            });
+            // 添加额外的类名以便识别
+            this.ribbonIconEl.addClass('tag-click-search-ribbon-icon');
+            console.log('✅ Tag Click Search: 侧边栏图标已添加');
 
             // 添加命令：搜索当前标签
             this.addCommand({
@@ -2466,7 +2538,36 @@ module.exports = class TagClickSearchPlugin extends Plugin {
                     }
                 }
             });
+
+            // 添加命令：复制当前笔记的绝对路径
+            this.addCommand({
+                id: 'copy-current-note-path',
+                name: '复制当前笔记的绝对路径',
+                callback: async () => {
+                    const activeFile = this.app.workspace.getActiveFile();
+                    if (!activeFile) {
+                        new Notice('没有打开的笔记');
+                        return;
+                    }
+                    const absolutePath = this.getAbsolutePath(activeFile.path);
+                    await navigator.clipboard.writeText(absolutePath);
+                    new Notice(`已复制路径: ${absolutePath}`);
+                }
+            });
+
+            // 添加命令：根据当前笔记标签导出
+            this.addCommand({
+                id: 'export-by-current-note-tags',
+                name: '根据当前笔记标签导出',
+                callback: async () => {
+                    await this.exportCurrentNoteByTags();
+                }
+            });
+
             console.log('✅ Tag Click Search: 命令已添加');
+
+            // 注册右键菜单
+            this.registerFileMenu();
 
             // 注册设置面板
             this.addSettingTab(new TagClickSearchSettingTab(this.app, this));
@@ -2487,8 +2588,195 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         }
     }
 
+    // 获取文件的绝对路径
+    getAbsolutePath(relativePath) {
+        const adapter = this.app.vault.adapter;
+        if (adapter && adapter.basePath) {
+            const path = require('path');
+            return path.join(adapter.basePath, relativePath);
+        }
+        return relativePath;
+    }
+
+    // 注册右键菜单
+    registerFileMenu() {
+        // 文件菜单（文件列表右键）
+        this.registerEvent(
+            this.app.workspace.on('file-menu', (menu, file) => {
+                if (file.extension !== 'md') return;
+
+                menu.addSeparator();
+
+                // 复制绝对路径
+                menu.addItem((item) => {
+                    item.setTitle('复制绝对路径')
+                        .setIcon('copy')
+                        .onClick(async () => {
+                            const absolutePath = this.getAbsolutePath(file.path);
+                            await navigator.clipboard.writeText(absolutePath);
+                            new Notice(`已复制路径: ${absolutePath}`);
+                        });
+                });
+
+                // 根据标签导出
+                menu.addItem((item) => {
+                    item.setTitle('根据标签导出')
+                        .setIcon('download')
+                        .onClick(async () => {
+                            await this.exportFileByTags(file);
+                        });
+                });
+            })
+        );
+
+        // 编辑器菜单（编辑区右键）
+        this.registerEvent(
+            this.app.workspace.on('editor-menu', (menu, editor, view) => {
+                const file = view.file;
+                if (!file || file.extension !== 'md') return;
+
+                menu.addSeparator();
+
+                // 复制绝对路径
+                menu.addItem((item) => {
+                    item.setTitle('复制绝对路径')
+                        .setIcon('copy')
+                        .onClick(async () => {
+                            const absolutePath = this.getAbsolutePath(file.path);
+                            await navigator.clipboard.writeText(absolutePath);
+                            new Notice(`已复制路径: ${absolutePath}`);
+                        });
+                });
+
+                // 根据标签导出
+                menu.addItem((item) => {
+                    item.setTitle('根据标签导出')
+                        .setIcon('download')
+                        .onClick(async () => {
+                            await this.exportFileByTags(file);
+                        });
+                });
+            })
+        );
+    }
+
+    // 根据当前笔记标签导出（命令调用）
+    async exportCurrentNoteByTags() {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) {
+            new Notice('没有打开的笔记');
+            return;
+        }
+        await this.exportFileByTags(activeFile);
+    }
+
+    // 根据文件标签导出
+    async exportFileByTags(file) {
+        try {
+            const cache = this.app.metadataCache.getFileCache(file);
+            if (!cache) {
+                new Notice('无法读取文件缓存');
+                return;
+            }
+
+            // 收集文件的所有标签
+            const fileTags = new Set();
+            
+            if (cache.tags) {
+                cache.tags.forEach(t => {
+                    const tagName = t.tag.replace(/^#/, '');
+                    fileTags.add(tagName);
+                });
+            }
+
+            if (cache.frontmatter && cache.frontmatter.tags) {
+                const fmTags = Array.isArray(cache.frontmatter.tags) 
+                    ? cache.frontmatter.tags 
+                    : [cache.frontmatter.tags];
+                
+                fmTags.forEach(t => {
+                    if (t != null) {
+                        fileTags.add(t.toString());
+                    }
+                });
+            }
+
+            if (fileTags.size === 0) {
+                new Notice('当前笔记没有标签');
+                return;
+            }
+
+            // 查找匹配的导出路径
+            const tagExportPaths = this.settings?.tagExportPaths || {};
+            let exportPath = '';
+            let matchedTag = '';
+
+            for (const fileTag of fileTags) {
+                const normalizedFileTag = fileTag.toLowerCase();
+                
+                for (const [configTag, configPath] of Object.entries(tagExportPaths)) {
+                    const normalizedConfigTag = configTag.toLowerCase().replace(/^#/, '');
+                    
+                    if (normalizedFileTag === normalizedConfigTag) {
+                        exportPath = configPath;
+                        matchedTag = fileTag;
+                        break;
+                    }
+                }
+                
+                if (exportPath) break;
+            }
+
+            // 如果没有匹配的标签路径，使用默认导出路径
+            if (!exportPath) {
+                exportPath = this.settings?.exportPath || '';
+            }
+
+            if (!exportPath) {
+                new Notice('未配置导出路径，请在设置中配置标签导出路径映射或默认导出目录');
+                return;
+            }
+
+            // 执行导出
+            const fs = require('fs');
+            const path = require('path');
+
+            // 确保目录存在
+            if (!fs.existsSync(exportPath)) {
+                fs.mkdirSync(exportPath, { recursive: true });
+            }
+
+            // 读取文件内容
+            const content = await this.app.vault.read(file);
+            
+            // 获取标题
+            let title = cache.frontmatter?.title || file.basename;
+            if (title != null && typeof title !== 'string') {
+                title = String(title);
+            }
+
+            // 清理文件名中的非法字符
+            const safeFileName = title.replace(/[\\/:*?"<>|]/g, '_') + '.md';
+            const targetPath = path.join(exportPath, safeFileName);
+
+            // 写入文件
+            fs.writeFileSync(targetPath, content, 'utf8');
+
+            const tagInfo = matchedTag ? ` (标签: #${matchedTag})` : '';
+            new Notice(`✅ 已导出到: ${targetPath}${tagInfo}`);
+            console.log(`📁 导出成功: ${targetPath}`);
+
+        } catch (error) {
+            console.error('导出失败:', error);
+            new Notice('导出失败: ' + error.message);
+        }
+    }
+
     onunload() {
         console.log('Tag Click Search: 插件卸载');
+        
+        // 清理视图
+        this.app.workspace.detachLeavesOfType(VIEW_TYPE_TAG_SEARCH);
         
         // 清理系统搜索增强功能
         this.cleanupSearchEnhancements();
@@ -3112,6 +3400,19 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         await this.searchByTag(tag);
     }
 
+    // 初始化右侧面板视图（用于在面板下拉菜单中显示）
+    initLeaf() {
+        // 检查是否已存在视图
+        if (this.app.workspace.getLeavesOfType(VIEW_TYPE_TAG_SEARCH).length) {
+            return;
+        }
+        // 在右侧面板创建视图（移动端和桌面端都需要）
+        this.app.workspace.getRightLeaf(false).setViewState({
+            type: VIEW_TYPE_TAG_SEARCH,
+            active: true,
+        });
+    }
+
     // 切换到搜索面板并聚焦搜索框
     async focusSearchPanel() {
         // 查找现有的搜索视图
@@ -3122,12 +3423,8 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             // 使用现有视图
             leaf = existing[0];
         } else {
-            // 创建新视图（空搜索结果）
-            if (this.app.isMobile) {
-                leaf = this.app.workspace.getLeaf('split', 'horizontal');
-            } else {
-                leaf = this.app.workspace.getRightLeaf(false);
-            }
+            // 创建新视图（空搜索结果）- 统一使用右侧面板
+            leaf = this.app.workspace.getRightLeaf(false);
 
             // 设置视图
             await leaf.setViewState({
@@ -3178,24 +3475,9 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             console.log('♻️ Reusing existing view');
             leaf = existing[0];
         } else {
-            // 创建新视图
-            if (this.app.isMobile) {
-                // 移动端：使用 window 模式（弹出式窗口）
-                console.log('📱 Mobile: Creating window leaf');
-                // 尝试使用 popover 或 window 类型的 leaf
-                const existingLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TAG_SEARCH);
-                if (existingLeaves.length === 0) {
-                    // 在移动端，使用 split 但设置为 horizontal（水平分割）
-                    // 这样可以让搜索结果占据下半部分，手势向下可以关闭
-                    leaf = this.app.workspace.getLeaf('split', 'horizontal');
-                } else {
-                    leaf = existingLeaves[0];
-                }
-            } else {
-                // 桌面端：在右侧边栏打开
-                console.log('🖥️ Desktop: Opening in right sidebar');
-                leaf = this.app.workspace.getRightLeaf(false);
-            }
+            // 创建新视图 - 统一使用右侧面板（移动端和桌面端）
+            console.log('📱 Creating right leaf');
+            leaf = this.app.workspace.getRightLeaf(false);
         }
 
         // 设置视图
@@ -3843,6 +4125,32 @@ module.exports = class TagClickSearchPlugin extends Plugin {
             .tag-search-count {
                 font-size: 0.9em;
                 color: var(--text-muted);
+            }
+
+            .tag-search-bottom-actions {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                padding: 10px 12px;
+                border-top: 1px solid var(--background-modifier-border);
+                background-color: var(--background-secondary);
+                position: sticky;
+                bottom: 0;
+            }
+
+            .tag-search-copy-path-button,
+            .tag-search-export-current-button {
+                flex: 1;
+                background-color: var(--interactive-normal);
+                color: var(--text-normal);
+                font-size: 13px;
+                padding: 8px 12px;
+            }
+
+            .tag-search-copy-path-button:hover,
+            .tag-search-export-current-button:hover {
+                background-color: var(--interactive-hover);
+                border-color: var(--interactive-accent);
             }
 
             .tag-search-bulk-actions {
