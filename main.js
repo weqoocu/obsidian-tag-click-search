@@ -1105,9 +1105,14 @@ class TagSearchResultsView extends ItemView {
             }
 
             // 点击打开文件（点击非复选框区域）
+            // CMD/Ctrl+点击在新标签页打开
             fileContent.addEventListener('click', async (e) => {
                 if (e.target !== checkbox) {
-                    await this.app.workspace.getLeaf().openFile(item.file);
+                    const newTab = e.metaKey || e.ctrlKey;
+                    const leaf = newTab
+                        ? this.app.workspace.getLeaf('tab')
+                        : this.app.workspace.getLeaf();
+                    await leaf.openFile(item.file);
                 }
             });
 
