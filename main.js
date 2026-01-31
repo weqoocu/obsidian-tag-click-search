@@ -1078,6 +1078,32 @@ class TagSearchResultsView extends ItemView {
                 text: item.title
             });
 
+            // 检查是否有 weqoocuurl 属性
+            if (item.cache.frontmatter && item.cache.frontmatter.weqoocuurl) {
+                // 创建一个容器用于标题和图标
+                const titleContainer = fileContent.createEl('div', {
+                    cls: 'title-with-icon'
+                });
+
+                // 将标题元素移到容器中
+                titleContainer.appendChild(titleEl);
+
+                // 创建已发布图标
+                const iconEl = fileContent.createEl('span', {
+                    cls: 'published-icon',
+                    attr: {
+                        'title': '已发布'
+                    }
+                });
+
+                // 设置图标内容（使用 SVG）
+                iconEl.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                `;
+            }
+
             // 点击打开文件（点击非复选框区域）
             fileContent.addEventListener('click', async (e) => {
                 if (e.target !== checkbox) {
@@ -3415,9 +3441,16 @@ module.exports = class TagClickSearchPlugin extends Plugin {
 
     // 切换到搜索面板并聚焦搜索框
     async focusSearchPanel() {
+        // 获取当前编辑器中选中的文本
+        let selectedText = '';
+        const activeView = this.app.workspace.getActiveViewOfType(require('obsidian').MarkdownView);
+        if (activeView && activeView.editor) {
+            selectedText = activeView.editor.getSelection().trim();
+        }
+
         // 查找现有的搜索视图
         const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_TAG_SEARCH);
-        
+
         let leaf;
         if (existing.length > 0) {
             // 使用现有视图
@@ -3446,14 +3479,25 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         // 显示视图
         this.app.workspace.revealLeaf(leaf);
 
-        // 聚焦搜索框
+        // 聚焦搜索框并填入选中文本
         setTimeout(() => {
             const view = leaf.view;
             if (view && view.containerEl) {
                 const searchInput = view.containerEl.querySelector('.tag-search-input');
                 if (searchInput) {
+                    // 如果有选中文本，填入搜索框并自动搜索
+                    if (selectedText) {
+                        searchInput.value = selectedText;
+                        console.log('✅ Tag Click Search: 已填入选中文本:', selectedText);
+                        // 自动触发搜索
+                        const searchButton = view.containerEl.querySelector('.tag-search-button');
+                        if (searchButton) {
+                            searchButton.click();
+                            console.log('✅ Tag Click Search: 已自动触发搜索');
+                        }
+                    }
                     searchInput.focus();
-                    searchInput.select(); // 选中现有文本（如果有）
+                    searchInput.select(); // 选中现有文本
                     console.log('✅ Tag Click Search: 搜索框已聚焦');
                 } else {
                     console.warn('⚠️ Tag Click Search: 未找到搜索框元素');
@@ -4273,6 +4317,28 @@ module.exports = class TagClickSearchPlugin extends Plugin {
 
             .title-sort-button.is-active svg {
                 stroke: var(--interactive-accent);
+            }
+
+            /* 标题和图标容器样式 */
+            .title-with-icon {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            /* 已发布图标样式 */
+            .published-icon {
+                color: var(--text-accent);
+                opacity: 0.7;
+                flex-shrink: 0;
+            }
+
+            .published-icon svg {
+                vertical-align: middle;
+            }
+
+            .published-icon:hover {
+                opacity: 1;
             }
         `;
         document.head.appendChild(style);
