@@ -1,7 +1,7 @@
 # Tag Click Search - 标签点击搜索插件
 
-[![GitHub release](https://img.shields.io/github/v/release/yourusername/obsidian-tag-click-search)](https://github.com/yourusername/obsidian-tag-click-search/releases)
-[![GitHub downloads](https://img.shields.io/github/downloads/yourusername/obsidian-tag-click-search/total)](https://github.com/yourusername/obsidian-tag-click-search/releases)
+[![GitHub release](https://img.shields.io/github/v/release/weqoocu/obsidian-tag-click-search)](https://github.com/weqoocu/obsidian-tag-click-search/releases)
+[![GitHub downloads](https://img.shields.io/github/downloads/weqoocu/obsidian-tag-click-search/total)](https://github.com/weqoocu/obsidian-tag-click-search/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > 🏷️ 一个简单而强大的 Obsidian 插件，让标签搜索变得更加便捷！
@@ -83,6 +83,11 @@
 
 - 可以在 Obsidian 设置 → 快捷键 中为 "搜索当前光标处的标签" 命令设置自定义快捷键
 - 建议设置：`Ctrl/Cmd + Shift + T`
+
+### 📅 插入笔记创建时间
+
+- 使用命令面板搜索"插入当前笔记创建时间"
+- 在光标位置插入当前笔记的创建日期，格式为 `📅 2026-02-03 `
 
 ### 📋 排序规则
 
@@ -256,13 +261,13 @@ tags: [学习, 笔记, 知识管理]
 
 ### 🐛 报告问题
 
-1. 查看 [现有 Issues](https://github.com/yourusername/obsidian-tag-click-search/issues)
+1. 查看 [现有 Issues](https://github.com/weqoocu/obsidian-tag-click-search/issues)
 2. 使用 Issue 模板创建新问题
 3. 提供详细的复现步骤
 
 ### 💡 功能建议
 
-1. 在 [Discussions](https://github.com/yourusername/obsidian-tag-click-search/discussions) 中讨论
+1. 在 [Discussions](https://github.com/weqoocu/obsidian-tag-click-search/discussions) 中讨论
 2. 详细描述功能需求和使用场景
 3. 考虑功能的通用性和实现复杂度
 
@@ -294,8 +299,8 @@ tags: [学习, 笔记, 知识管理]
 
 ## 📞 联系方式
 
-- 🐛 **问题反馈**：[GitHub Issues](https://github.com/yourusername/obsidian-tag-click-search/issues)
-- 💬 **功能讨论**：[GitHub Discussions](https://github.com/yourusername/obsidian-tag-click-search/discussions)
+- 🐛 **问题反馈**：[GitHub Issues](https://github.com/weqoocu/obsidian-tag-click-search/issues)
+- 💬 **功能讨论**：[GitHub Discussions](https://github.com/weqoocu/obsidian-tag-click-search/discussions)
 - 📧 **邮件联系**：musicleaf@qq.com
 - 🌐 **个人网站**：[酷口家数字花园](https://weqoocu.com)
 
