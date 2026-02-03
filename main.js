@@ -2437,7 +2437,8 @@ const DEFAULT_SETTINGS = {
     enableSearchTitleReplace: true,  // 是否在系统搜索中显示 title 属性
     enableSearchTitleSort: true,  // 是否启用按 title 排序功能
     searchSortMode: null,  // 搜索排序模式: null, 'title-asc', 'title-desc'
-    tagExportPaths: {}  // 标签-导出路径映射，格式: { "标签名": "导出路径", ... }
+    tagExportPaths: {},  // 标签-导出路径映射，格式: { "标签名": "导出路径", ... }
+    excludeFolders: []  // 排除文件夹列表，搜索时会忽略这些文件夹中的文件
 };
 
 module.exports = class TagClickSearchPlugin extends Plugin {
@@ -2592,6 +2593,26 @@ module.exports = class TagClickSearchPlugin extends Plugin {
                 name: '根据当前笔记标签导出',
                 callback: async () => {
                     await this.exportCurrentNoteByTags();
+                }
+            });
+
+            // 添加命令：获取当前笔记创建时间并插入到光标位置
+            this.addCommand({
+                id: 'get-note-creation-date',
+                name: '插入当前笔记创建时间',
+                editorCallback: (editor, view) => {
+                    const activeFile = this.app.workspace.getActiveFile();
+                    if (!activeFile) {
+                        new Notice('没有打开的笔记');
+                        return;
+                    }
+                    const createdTime = activeFile.stat.ctime;
+                    const date = new Date(createdTime);
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const formattedDate = `📅 ${year}-${month}-${day} `;
+                    editor.replaceSelection(formattedDate);
                 }
             });
 
@@ -3133,6 +3154,9 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         const allFiles = this.app.vault.getMarkdownFiles();
 
         for (const file of allFiles) {
+            // 检查是否在排除文件夹中
+            if (this.isFileInExcludedFolder(file)) continue;
+
             const cache = this.app.metadataCache.getFileCache(file);
             if (!cache) continue;
 
@@ -3226,12 +3250,15 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         
         // 将标题关键词按空格分词
         const keywords = titleKeyword.trim().split(/\s+/).filter(k => k.length > 0);
-        
+
         // 获取包含该标签且标题匹配的所有文件
         const matchedFiles = [];
         const allFiles = this.app.vault.getMarkdownFiles();
 
         for (const file of allFiles) {
+            // 检查是否在排除文件夹中
+            if (this.isFileInExcludedFolder(file)) continue;
+
             const cache = this.app.metadataCache.getFileCache(file);
             if (!cache) continue;
 
@@ -3310,6 +3337,9 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         const allFiles = this.app.vault.getMarkdownFiles();
 
         for (const file of allFiles) {
+            // 检查是否在排除文件夹中
+            if (this.isFileInExcludedFolder(file)) continue;
+
             const cache = this.app.metadataCache.getFileCache(file);
             if (!cache) continue;
 
@@ -3385,6 +3415,9 @@ module.exports = class TagClickSearchPlugin extends Plugin {
         const allFiles = this.app.vault.getMarkdownFiles();
 
         for (const file of allFiles) {
+            // 检查是否在排除文件夹中
+            if (this.isFileInExcludedFolder(file)) continue;
+
             const cache = this.app.metadataCache.getFileCache(file);
             
             // 获取 title（优先使用 frontmatter 的 title）
@@ -4375,6 +4408,19 @@ module.exports = class TagClickSearchPlugin extends Plugin {
     async saveSettings() {
         await this.saveData(this.settings);
     }
+
+    // 检查文件是否在排除文件夹中
+    isFileInExcludedFolder(file) {
+        const excludeFolders = this.settings?.excludeFolders || [];
+        if (excludeFolders.length === 0) return false;
+
+        const filePath = file.path;
+        return excludeFolders.some(folder => {
+            // 规范化文件夹路径，确保以 / 结尾进行精确匹配
+            const normalizedFolder = folder.endsWith('/') ? folder : folder + '/';
+            return filePath.startsWith(normalizedFolder) || filePath.startsWith(folder + '/');
+        });
+    }
 };
 
 // 设置面板类
@@ -4559,6 +4605,119 @@ class TagClickSearchSettingTab extends PluginSettingTab {
             pathInput.value = '';
             renderTagMappings();
             new Notice(`已添加标签 #${tag} 的导出路径映射`);
+        });
+
+        // 排除文件夹设置
+        containerEl.createEl('h3', { text: '🚫 排除文件夹' });
+
+        const excludeFolderDesc = containerEl.createEl('p', {
+            cls: 'setting-item-description',
+            text: '搜索时将忽略这些文件夹中的文件。输入相对于 Vault 根目录的路径。'
+        });
+
+        // 显示现有的排除文件夹
+        const excludeFolders = this.plugin.settings.excludeFolders || [];
+        const excludeFolderContainer = containerEl.createEl('div', { cls: 'exclude-folder-container' });
+
+        // 渲染排除文件夹列表
+        const renderExcludeFolders = () => {
+            excludeFolderContainer.empty();
+
+            const folders = this.plugin.settings.excludeFolders || [];
+
+            if (folders.length === 0) {
+                excludeFolderContainer.createEl('p', {
+                    text: '暂无排除文件夹，点击下方按钮添加。',
+                    cls: 'setting-item-description'
+                });
+            } else {
+                for (const folder of folders) {
+                    const folderItem = excludeFolderContainer.createEl('div', {
+                        cls: 'exclude-folder-item setting-item'
+                    });
+                    folderItem.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--background-modifier-border);';
+
+                    // 文件夹图标
+                    const folderIcon = folderItem.createEl('span', {
+                        text: '📁',
+                        cls: 'exclude-folder-icon'
+                    });
+
+                    // 文件夹路径
+                    const folderPath = folderItem.createEl('span', {
+                        text: folder,
+                        cls: 'exclude-folder-path'
+                    });
+                    folderPath.style.cssText = 'flex: 1; color: var(--text-muted); font-size: 0.9em;';
+
+                    // 删除按钮
+                    const deleteBtn = folderItem.createEl('button', {
+                        text: '删除',
+                        cls: 'mod-warning'
+                    });
+                    deleteBtn.style.cssText = 'padding: 4px 8px; font-size: 0.85em;';
+                    deleteBtn.addEventListener('click', async () => {
+                        const index = this.plugin.settings.excludeFolders.indexOf(folder);
+                        if (index > -1) {
+                            this.plugin.settings.excludeFolders.splice(index, 1);
+                            await this.plugin.saveSettings();
+                            renderExcludeFolders();
+                            new Notice(`已移除排除文件夹: ${folder}`);
+                        }
+                    });
+                }
+            }
+        };
+
+        renderExcludeFolders();
+
+        // 添加新排除文件夹的表单
+        const addExcludeFolderDiv = containerEl.createEl('div', { cls: 'exclude-folder-add' });
+        addExcludeFolderDiv.style.cssText = 'margin-top: 12px; padding: 12px; background: var(--background-secondary); border-radius: 8px;';
+
+        addExcludeFolderDiv.createEl('h4', { text: '添加排除文件夹', cls: 'setting-item-name' });
+
+        const folderInputRow = addExcludeFolderDiv.createEl('div');
+        folderInputRow.style.cssText = 'display: flex; gap: 8px; align-items: center; margin-top: 8px;';
+
+        const folderInput = folderInputRow.createEl('input', {
+            type: 'text',
+            placeholder: '文件夹路径（如：Archive 或 Templates/Old）'
+        });
+        folderInput.style.cssText = 'flex: 1; padding: 6px 10px;';
+
+        const addFolderBtn = folderInputRow.createEl('button', { text: '添加' });
+        addFolderBtn.style.cssText = 'padding: 6px 16px;';
+
+        addFolderBtn.addEventListener('click', async () => {
+            let folder = folderInput.value.trim();
+
+            if (!folder) {
+                new Notice('请输入文件夹路径');
+                return;
+            }
+
+            // 移除开头的 / 如果有
+            folder = folder.replace(/^\/+/, '');
+            // 移除末尾的 / 如果有
+            folder = folder.replace(/\/+$/, '');
+
+            if (!this.plugin.settings.excludeFolders) {
+                this.plugin.settings.excludeFolders = [];
+            }
+
+            // 检查是否已存在
+            if (this.plugin.settings.excludeFolders.includes(folder)) {
+                new Notice(`文件夹 ${folder} 已在排除列表中`);
+                return;
+            }
+
+            this.plugin.settings.excludeFolders.push(folder);
+            await this.plugin.saveSettings();
+
+            folderInput.value = '';
+            renderExcludeFolders();
+            new Notice(`已添加排除文件夹: ${folder}`);
         });
 
         // 使用说明
